@@ -1,8 +1,9 @@
 import CryptoJS from 'crypto-js'; 
 
 export const CLIENT_ID = 'OKTcz8ajCfiPi58oU4bNpZc0hGXpGFG2GPJPG6EEMhO02QRa'; 
-export const REDIRECT_URI = 'http://10.51.212.51:5173'; 
-export const SCOPES = 'data:read data:write data:create';
+export const REDIRECT_URI = 'https://10.51.211.201:5173';
+// 💡 뷰어 렌더링 권한인 'viewables:read'를 반드시 추가해야 합니다.
+export const SCOPES = 'data:read data:write data:create viewables:read';
 
 export function generateRandomString(length) {
   const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
