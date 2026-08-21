@@ -646,11 +646,18 @@ export default function App() {
           {/* ============================================== */}
           {activeMenu === 'video' && (
             <div style={styles.card}>
-              <div style={styles.cardHeader}>
-                <span style={styles.cardTitle}>현장 동선 영상 기록</span>
+              {/* 1. ACC floor_plan 폴더의 DWG를 즉석에서 선택 */}
+              <div
+                style={{ ...styles.inputWithIcon, cursor: 'pointer', padding: '12px', justifyContent: 'space-between', marginBottom: '10px' }}
+                onClick={loadDwgList}
+              >
+                <span style={{ fontSize: '15px', color: selectedDwgName ? '#2C3E50' : '#000000', fontWeight: selectedDwgName ? 'bold' : 'normal' }}>
+                  {selectedDwgName || 'ACC에서 도면(DWG) 선택...'}
+                </span>
+                <FaFileAlt color="#3498DB" size={20} />
               </div>
 
-              {/* 1. 이 프로젝트에 미리 등록된 도면이 여러 개면 선택 */}
+              {/* 1-1. 이 프로젝트에 미리 등록된 도면이 여러 개면 선택 */}
               {projectDrawings.length > 1 && (
                 <div style={{ ...styles.inputWithIcon, padding: '12px', gap: '8px', marginBottom: '10px' }}>
                   <select
@@ -666,19 +673,8 @@ export default function App() {
                 </div>
               )}
 
-              {/* 1-1. ACC floor_plan 폴더의 DWG를 즉석에서 선택 */}
-              <div
-                style={{ ...styles.inputWithIcon, cursor: 'pointer', padding: '12px', justifyContent: 'space-between', marginBottom: '10px' }}
-                onClick={loadDwgList}
-              >
-                <span style={{ fontSize: '15px', color: selectedDwgName ? '#2C3E50' : '#000000', fontWeight: selectedDwgName ? 'bold' : 'normal' }}>
-                  {selectedDwgName || 'ACC에서 도면(DWG) 선택...'}
-                </span>
-                <FaFileAlt color="#3498DB" size={20} />
-              </div>
-
-              {/* 2. 도면 오버레이 지도 및 실시간 카메라 뷰 */}
-              <div style={{ position: 'relative', width: '100%', height: '350px', backgroundColor: '#ecf0f1', borderRadius: '5px', overflow: 'hidden', marginBottom: '15px', border: '1px solid #D5D8DC' }}>
+              {/* 2. 도면 오버레이 지도 (기존 높이의 2/3) */}
+              <div style={{ position: 'relative', width: '100%', height: '233px', backgroundColor: '#ecf0f1', borderRadius: '5px', overflow: 'hidden', marginBottom: '15px', border: '1px solid #D5D8DC' }}>
 
                 <iframe
                   ref={mapIframeRef}
@@ -693,14 +689,16 @@ export default function App() {
                      {dwgParseStatus}
                    </div>
                 )}
+              </div>
 
-                {/* 우측 하단 카메라 화면 (PIP) */}
-                <div style={{ position: 'absolute', bottom: 10, right: 10, width: '100px', height: '140px', backgroundColor: '#000', borderRadius: '8px', border: '2px solid #fff', overflow: 'hidden', boxShadow: '0 4px 6px rgba(0,0,0,0.3)', zIndex: 3 }}>
+              {/* 3. 실시간 카메라 뷰 (지도 아래, 정사각형) */}
+              <div style={{ width: '100%', display: 'flex', justifyContent: 'center', marginBottom: '15px' }}>
+                <div style={{ width: '200px', height: '200px', backgroundColor: '#000', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 5px rgba(0,0,0,0.3)' }}>
                    <video ref={videoPreviewRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }} autoPlay muted playsInline />
                 </div>
               </div>
 
-              {/* 3. 촬영 컨트롤 버튼 */}
+              {/* 4. 촬영 컨트롤 버튼 */}
               <div style={styles.buttonRow}>
                 {!isRecording ? (
                   <button type="button" style={{ ...styles.btnCamera, backgroundColor: '#E74C3C' }} onClick={handleStartRecording}>
@@ -713,7 +711,7 @@ export default function App() {
                 )}
               </div>
 
-              {/* 4. 최종 업로드 버튼 */}
+              {/* 5. 최종 업로드 버튼 */}
               <button
                 type="button"
                 style={{ ...styles.btnUpload, backgroundColor: (videoBlob && !isUploadingVideo) ? '#E67E22' : '#BDC3C7' }}
