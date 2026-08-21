@@ -378,6 +378,26 @@ export default function App() {
     return () => window.removeEventListener('message', handleMapMessage);
   }, []);
 
+  // 영상기록 탭이 열려있는 동안 GPS를 최상위 페이지에서 직접 구독해 지도(iframe)로 밀어넣는다.
+  // 모바일 브라우저는 iframe 안에서 도는 watchPosition을 백그라운드 취급해 첫 위치 이후로
+  // 갱신을 멈추는 경우가 있어(특히 iOS Safari), iframe 자체 GPS 구독 대신 이 방식을 쓴다.
+  useEffect(() => {
+    if (activeMenu !== 'video') return;
+    if (!('geolocation' in navigator)) {
+      const t = setTimeout(() => setMapError('이 브라우저는 GPS(geolocation)를 지원하지 않습니다.'), 0);
+      return () => clearTimeout(t);
+    }
+
+    const pushPosition = (pos) => {
+      mapIframeRef.current?.contentWindow?.setUserLocation?.(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+    };
+    const handleError = (err) => {
+      setMapError(`GPS 위치 수신 실패: ${err.message}`);
+    };
+    const watchId = navigator.geolocation.watchPosition(pushPosition, handleError, { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 });
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [activeMenu]);
+
   const sendDrawingToMap = (drawing) => {
     pendingDrawingRef.current = drawing; // 마지막 도면으로 기억해뒀다가 iframe이 재마운트되면 다시 보냄
     if (mapReady) {
@@ -653,7 +673,7 @@ export default function App() {
           {/* 🎥 영상기록 (activeMenu === 'video')             */}
           {/* ============================================== */}
           {activeMenu === 'video' && (
-            <div style={styles.card}>
+            <div>
               {/* 1. ACC floor_plan 폴더의 DWG를 즉석에서 선택 */}
               <div
                 style={{ ...styles.inputWithIcon, cursor: 'pointer', padding: '12px', justifyContent: 'space-between', marginBottom: '10px' }}
