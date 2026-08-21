@@ -8,8 +8,10 @@ import * as pdfjsLib from 'pdfjs-dist';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
-import { CLIENT_ID, REDIRECT_URI, SCOPES, generateRandomString, generateCodeChallenge, compressImage } from './utils';
+import { CLIENT_ID, REDIRECT_URI, SCOPES, KAKAO_JS_KEY, generateRandomString, generateCodeChallenge, compressImage } from './utils';
 import { styles, pdfStyles } from './styles';
+import { SITE_DRAWINGS } from './siteDrawings';
+import { parseDwgToDrawing } from './dwgParser';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -54,29 +56,20 @@ export default function App() {
   const [activeBoardIdForMap, setActiveBoardIdForMap] = useState(null);
 
   // ==========================================
-  // 🎥 [영상기록] 관련 상태 및 Ref (PDF 도면 + GPS 마커용)
+  // 🎥 [영상기록] 관련 상태 및 Ref (카카오맵 GPS-도면 오버레이용)
   // ==========================================
-  const markerRef = useRef(null);
-  const gpsWatchIdRef = useRef(null);
-  const pixelPositionRef = useRef(null); // GPS를 변환한 캔버스 픽셀 좌표 저장
+  const mapIframeRef = useRef(null); // 도면+GPS를 보여주는 kakao-map.html iframe
+  const [mapReady, setMapReady] = useState(false); // iframe이 {type:'ready'}를 보내면 true
+  const pendingDrawingRef = useRef(null); // mapReady 되기 전에 보내려던 도면 데이터 대기열
+  const [selectedDrawingIndex, setSelectedDrawingIndex] = useState(0);
 
-  const [showPlanModal, setShowPlanModal] = useState(false);
-  const [planList, setPlanList] = useState([]);
-  const [loadingPlanList, setLoadingPlanList] = useState(false);
-  const [selectedPlanItem, setSelectedPlanItem] = useState(null);
-  const [planLoadStatus, setPlanLoadStatus] = useState('');
-  const planCanvasRef = useRef(null); // 도면 PDF를 그릴 캔버스
-  const pathCanvasRef = useRef(null); // 이동 경로 선을 그릴 오버레이 캔버스
-  const pathPointsRef = useRef([]); // 촬영 중 기록된 경로 픽셀 좌표들
+  const [showDwgModal, setShowDwgModal] = useState(false);
+  const [dwgList, setDwgList] = useState([]);
+  const [loadingDwgList, setLoadingDwgList] = useState(false);
+  const [dwgParseStatus, setDwgParseStatus] = useState('');
+  const [selectedDwgName, setSelectedDwgName] = useState('');
+
   const isRecordingRef = useRef(false);
-
-  // 🎯 GPS ↔ 도면 픽셀 좌표 보정(캘리브레이션) 관련
-  const [dwgCalibration, setDwgCalibrationState] = useState(null); // {scale, rotation, gpsOrigin, pixelOrigin}
-  const dwgCalibrationRef = useRef(null);
-  const setDwgCalibration = (calib) => { dwgCalibrationRef.current = calib; setDwgCalibrationState(calib); };
-  const calibModeRef = useRef(0); // 0=보정 안 함, 1=기준점1 대기, 2=기준점2 대기
-  const calibPointsRef = useRef([]);
-  const [calibHint, setCalibHint] = useState('');
 
   const [isRecording, setIsRecording] = useState(false);
   const [videoBlob, setVideoBlob] = useState(null);
@@ -355,16 +348,51 @@ export default function App() {
   };
 
   // ==========================================
-  // 🎥 영상기록 전용 함수들 (PDF 도면 + GPS 보정)
+  // 🎥 영상기록 전용: 도면을 kakao-map.html iframe으로 전달 (등록된 정적 도면 / ACC에서 즉석 파싱한 DWG 공용 경로)
   // ==========================================
-  const loadPlanList = async () => {
-    if (!selectedProject) return alert("프로젝트를 선택해주세요.");
-    setShowPlanModal(true); setLoadingPlanList(true); setPlanList([]);
+  const selectedProjectName = projects.find(p => p.id === selectedProject)?.name;
+  const projectDrawings = SITE_DRAWINGS[selectedProjectName] || [];
+  const selectedDrawing = projectDrawings[selectedDrawingIndex] || projectDrawings[0] || null;
 
+  // iframe이 준비됐다는 신호({type:'ready'})를 받으면 mapReady를 세팅하고, 마지막으로
+  // 보여주던 도면이 있으면 바로 재전송한다. 영상기록 탭을 벗어났다 돌아오면 iframe이
+  // 통째로 재마운트되어 이 'ready'가 다시 오므로, 그때도 자동으로 다시 그려진다.
+  useEffect(() => {
+    const handleMapMessage = (event) => {
+      if (event.source !== mapIframeRef.current?.contentWindow) return;
+      if (event.data?.type !== 'ready') return;
+      setMapReady(true);
+      if (pendingDrawingRef.current) {
+        mapIframeRef.current.contentWindow.postMessage({ type: 'renderDrawing', ...pendingDrawingRef.current }, window.location.origin);
+      }
+    };
+    window.addEventListener('message', handleMapMessage);
+    return () => window.removeEventListener('message', handleMapMessage);
+  }, []);
+
+  const sendDrawingToMap = (drawing) => {
+    pendingDrawingRef.current = drawing; // 마지막 도면으로 기억해뒀다가 iframe이 재마운트되면 다시 보냄
+    if (mapReady) {
+      mapIframeRef.current?.contentWindow?.postMessage({ type: 'renderDrawing', ...drawing }, window.location.origin);
+    }
+  };
+
+  // SITE_DRAWINGS 레지스트리에서 도면을 고르면 정적 JSON을 읽어 지도로 보냄
+  useEffect(() => {
+    if (!selectedDrawing) return;
+    fetch(selectedDrawing.file)
+      .then(res => res.json())
+      .then(data => { setSelectedDwgName(''); sendDrawingToMap(data); })
+      .catch(() => alert(`등록된 도면을 불러올 수 없습니다: ${selectedDrawing.file}`));
+  }, [selectedDrawing?.file]);
+
+  // ACC의 '99 TEST/Site_log/floor_plan' 폴더에서 DWG 파일 목록 조회
+  const loadDwgList = async () => {
+    if (!selectedProject) return alert("프로젝트를 선택해주세요.");
+    setShowDwgModal(true); setLoadingDwgList(true); setDwgList([]);
     try {
       const project = projects.find(p => p.id === selectedProject);
       const authHeader = { Authorization: `Bearer ${accessToken}` };
-
       const topRes = await fetch(`https://developer.api.autodesk.com/project/v1/hubs/${project.hubId}/projects/${project.id}/topFolders`, { headers: authHeader });
       const projFolder = (await topRes.json()).data.find(f => f.attributes.name === 'Project Files');
       const testFolderRes = await fetch(`https://developer.api.autodesk.com/data/v1/projects/${project.id}/folders/${projFolder.id}/contents`, { headers: authHeader });
@@ -373,100 +401,18 @@ export default function App() {
       const siteLogFolder = (await siteLogRes.json()).data.find(item => item.attributes.name === 'Site_log');
       const fpRes = await fetch(`https://developer.api.autodesk.com/data/v1/projects/${project.id}/folders/${siteLogFolder.id}/contents`, { headers: authHeader });
       const fpFolder = (await fpRes.json()).data.find(item => item.attributes.name === 'floor_plan');
-
-      const pdfsRes = await fetch(`https://developer.api.autodesk.com/data/v1/projects/${project.id}/folders/${fpFolder.id}/contents`, { headers: authHeader });
-      const pdfsData = await pdfsRes.json();
-
-      setPlanList(pdfsData.data.filter(item => item.type === 'items' && item.attributes.displayName.toLowerCase().endsWith('.pdf')));
-    } catch (err) { alert("도면 폴더를 불러올 수 없습니다."); setShowPlanModal(false); }
-    finally { setLoadingPlanList(false); }
+      const filesRes = await fetch(`https://developer.api.autodesk.com/data/v1/projects/${project.id}/folders/${fpFolder.id}/contents`, { headers: authHeader });
+      const filesData = await filesRes.json();
+      setDwgList(filesData.data.filter(item => item.type === 'items' && item.attributes.displayName.toLowerCase().endsWith('.dwg')));
+    } catch (err) { alert("도면 폴더를 불러올 수 없습니다."); setShowDwgModal(false); }
+    finally { setLoadingDwgList(false); }
   };
 
-  // 🎯 위/경도를 Web Mercator(미터) 평면 좌표로 변환
-  const gpsToMercator = (lat, lng) => {
-    const rMajor = 6378137.0;
-    return {
-      x: rMajor * (lng * Math.PI / 180),
-      y: rMajor * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2))
-    };
-  };
-
-  // 🎯 기준점 2개(각각 {pixel:{x,y}, gps:{x,y}})로 축척+회전+이동 변환을 계산
-  const computeCalibration = (p1, p2) => {
-    const dGps = { x: p2.gps.x - p1.gps.x, y: p2.gps.y - p1.gps.y };
-    const dPixel = { x: p2.pixel.x - p1.pixel.x, y: p2.pixel.y - p1.pixel.y };
-    const pixelDist = Math.hypot(dPixel.x, dPixel.y);
-    if (pixelDist < 1e-6) return null; // 두 기준점을 도면상 같은 지점으로 찍음
-    const scale = Math.hypot(dGps.x, dGps.y) / pixelDist;
-    const rotation = Math.atan2(dGps.y, dGps.x) - Math.atan2(dPixel.y, dPixel.x);
-    return { scale, rotation, gpsOrigin: p1.gps, pixelOrigin: p1.pixel };
-  };
-
-  // 🎯 보정값을 이용해 GPS(Web Mercator) 좌표를 도면 픽셀 좌표로 역변환
-  const gpsToPixel = (calib, gpsPt) => {
-    const dx = gpsPt.x - calib.gpsOrigin.x;
-    const dy = gpsPt.y - calib.gpsOrigin.y;
-    const cosA = Math.cos(-calib.rotation);
-    const sinA = Math.sin(-calib.rotation);
-    const rx = dx * cosA - dy * sinA;
-    const ry = dx * sinA + dy * cosA;
-    return { x: calib.pixelOrigin.x + rx / calib.scale, y: calib.pixelOrigin.y + ry / calib.scale };
-  };
-
-  const startCalibration = () => {
-    if (!selectedPlanItem) return alert('먼저 도면을 선택해주세요.');
-    calibPointsRef.current = [];
-    calibModeRef.current = 1;
-    setCalibHint('🎯 기준점1 위치에 실제로 서서, 도면에서 해당 지점을 탭하세요.');
-  };
-
-  const handleCalibrationTap = (pixelPoint, planItemId) => {
-    setCalibHint('📡 GPS 수신 중...');
-    navigator.geolocation.getCurrentPosition((pos) => {
-      const gpsPt = gpsToMercator(pos.coords.latitude, pos.coords.longitude);
-      calibPointsRef.current.push({ pixel: pixelPoint, gps: gpsPt });
-      if (calibModeRef.current === 1) {
-        calibModeRef.current = 2;
-        setCalibHint('✅ 기준점1 저장됨. 기준점2 위치로 이동한 후 도면에서 그 지점을 탭하세요.');
-      } else {
-        const calib = computeCalibration(calibPointsRef.current[0], calibPointsRef.current[1]);
-        calibModeRef.current = 0;
-        calibPointsRef.current = [];
-        setCalibHint('');
-        if (!calib) return alert('두 기준점을 도면상에서 같은 위치로 찍어서 계산할 수 없습니다. 다시 시도해주세요.');
-        setDwgCalibration(calib);
-        localStorage.setItem(`plan_calib_${planItemId}`, JSON.stringify(calib));
-        alert('🎉 보정 완료! 이제 GPS 위치가 도면에 표시됩니다.');
-        startGpsTracking();
-      }
-    }, (err) => {
-      setCalibHint('');
-      alert(`GPS 수신 실패로 기준점을 저장하지 못했습니다.\n코드: ${err.code} 메시지: ${err.message}`);
-    }, { enableHighAccuracy: true });
-  };
-
-  const handlePlanCanvasClick = (e) => {
-    if (calibModeRef.current === 0) return;
-    const x = e.nativeEvent.offsetX;
-    const y = e.nativeEvent.offsetY;
-    handleCalibrationTap({ x, y }, selectedPlanItem.id);
-  };
-
-  // ==========================================
-  // 💡 1. PDF 도면을 캔버스에 렌더링 (Autodesk Viewer 없이, 사진대지와 동일한 방식)
-  // ==========================================
-  const viewPlan = async (item) => {
-    setShowPlanModal(false);
-    setSelectedPlanItem(item);
-    setPlanLoadStatus('도면 다운로드 중...');
-    calibModeRef.current = 0;
-    calibPointsRef.current = [];
-    setCalibHint('');
-    pathPointsRef.current = [];
-
-    const savedCalibRaw = localStorage.getItem(`plan_calib_${item.id}`);
-    try { setDwgCalibration(savedCalibRaw ? JSON.parse(savedCalibRaw) : null); } catch { setDwgCalibration(null); }
-
+  // 선택한 DWG를 ACC에서 다운로드해 브라우저에서 바로 파싱하고 지도로 전송
+  const selectDwg = async (item) => {
+    setShowDwgModal(false);
+    setSelectedDwgName(item.attributes.displayName);
+    setDwgParseStatus('도면 다운로드 중...');
     try {
       const project = projects.find(p => p.id === selectedProject);
       const authHeader = { Authorization: `Bearer ${accessToken}` };
@@ -484,93 +430,14 @@ export default function App() {
       if (!fileResponse.ok) throw new Error(`파일 다운로드 실패 (${fileResponse.status})`);
       const arrayBuffer = await fileResponse.arrayBuffer();
 
-      setPlanLoadStatus('도면 렌더링 중...');
-      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
-      const page = await pdf.getPage(1);
-      const viewport = page.getViewport({ scale: 2 });
-      const canvas = planCanvasRef.current;
-      const context = canvas.getContext('2d');
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
-      await page.render({ canvasContext: context, viewport }).promise;
-
-      // 경로선 오버레이 캔버스를 도면 캔버스의 "화면에 표시되는 크기"에 맞춰 픽셀 1:1로 맞춤
-      // (기준점 탭/마커 위치가 모두 이 화면 표시 크기 기준 좌표라서 동일하게 맞춰야 선이 어긋나지 않음)
-      const pathCanvas = pathCanvasRef.current;
-      if (pathCanvas) {
-        pathCanvas.width = canvas.clientWidth;
-        pathCanvas.height = canvas.clientHeight;
-        pathCanvas.getContext('2d').clearRect(0, 0, pathCanvas.width, pathCanvas.height);
-      }
-
-      setPlanLoadStatus('');
-      startGpsTracking();
+      setDwgParseStatus('도면 파싱 중... (최초 1회는 변환 엔진 로드 때문에 다소 걸릴 수 있습니다)');
+      const drawing = await parseDwgToDrawing(arrayBuffer);
+      sendDrawingToMap(drawing);
+      setDwgParseStatus('');
     } catch (err) {
-      setPlanLoadStatus('');
-      alert(`도면 렌더링 실패!\n${err.message}`);
+      setDwgParseStatus('');
+      alert(`도면 파싱 실패!\n${err.message}`);
     }
-  };
-
-  // ==========================================
-  // 💡 2. 내 GPS 위치를 도면 픽셀 좌표로 변환
-  // ==========================================
-  const startGpsTracking = () => {
-    if (!('geolocation' in navigator)) return alert("GPS를 지원하지 않습니다.");
-    if (!window.isSecureContext) {
-      alert(`⚠️ 보안 컨텍스트가 아니라서 GPS를 사용할 수 없습니다.\n\n현재 주소: ${window.location.protocol}//${window.location.host}\n\nhttps:// 또는 localhost가 아니면 브라우저가 GPS를 차단합니다.`);
-    }
-
-    const processPosition = (position) => {
-      const { latitude, longitude } = position.coords;
-      const gpsPt = gpsToMercator(latitude, longitude);
-
-      // 기준점 보정이 끝난 도면만 픽셀 좌표로 변환 가능. 보정 전에는 마커를 표시하지 않음.
-      if (!dwgCalibrationRef.current) { pixelPositionRef.current = null; return; }
-      pixelPositionRef.current = gpsToPixel(dwgCalibrationRef.current, gpsPt);
-      updateMarkerPosition();
-      if (isRecordingRef.current) drawPathSegment(pixelPositionRef.current);
-    };
-
-    const handleGpsError = (err) => {
-      console.log(err);
-      alert(`🔥 GPS 위치 수신 실패\n\n코드: ${err.code}\n메시지: ${err.message}`);
-    };
-
-    navigator.geolocation.getCurrentPosition(processPosition, handleGpsError, { enableHighAccuracy: true });
-
-    if (gpsWatchIdRef.current) navigator.geolocation.clearWatch(gpsWatchIdRef.current);
-    gpsWatchIdRef.current = navigator.geolocation.watchPosition(
-      processPosition, handleGpsError, { enableHighAccuracy: true, maximumAge: 0 }
-    );
-  };
-
-  // ==========================================
-  // 💡 3. 도면 픽셀 좌표 ➔ 마커 위치 렌더링
-  // ==========================================
-  const updateMarkerPosition = () => {
-    if (!pixelPositionRef.current || !markerRef.current) return;
-    markerRef.current.style.left = `${pixelPositionRef.current.x - 10}px`;
-    markerRef.current.style.top = `${pixelPositionRef.current.y - 10}px`;
-    markerRef.current.style.display = 'block';
-  };
-
-  // 🎯 촬영 중 GPS로 받은 새 지점을 이전 지점과 이어 도면 위에 선으로 그림
-  const drawPathSegment = (point) => {
-    const canvas = pathCanvasRef.current;
-    if (!canvas) return;
-    const prevPoint = pathPointsRef.current[pathPointsRef.current.length - 1];
-    pathPointsRef.current.push(point);
-    if (!prevPoint) return;
-
-    const ctx = canvas.getContext('2d');
-    ctx.strokeStyle = '#2ECC71';
-    ctx.lineWidth = 4;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(prevPoint.x, prevPoint.y);
-    ctx.lineTo(point.x, point.y);
-    ctx.stroke();
   };
 
   // ==========================================
@@ -583,12 +450,8 @@ export default function App() {
     recordedChunksRef.current = [];
     setVideoBlob(null);
 
-    // 새 촬영을 시작하면 이전 경로선을 지우고, 지금 위치부터 새로 그리기 시작
-    pathPointsRef.current = pixelPositionRef.current ? [pixelPositionRef.current] : [];
-    if (pathCanvasRef.current) {
-      const ctx = pathCanvasRef.current.getContext('2d');
-      ctx.clearRect(0, 0, pathCanvasRef.current.width, pathCanvasRef.current.height);
-    }
+    // 촬영 중 이동 경로를 지도 위에 표시 (kakao-map.html의 위치추적 시작)
+    mapIframeRef.current?.contentWindow?.startTracking?.();
     isRecordingRef.current = true;
 
     // mp4로 바로 녹화되길 우선 시도하고, 브라우저가 지원하지 않으면 webm으로 대체합니다.
@@ -613,6 +476,7 @@ export default function App() {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
     }
+    mapIframeRef.current?.contentWindow?.finishTracking?.();
     isRecordingRef.current = false;
     setIsRecording(false);
   };
@@ -786,77 +650,47 @@ export default function App() {
                 <span style={styles.cardTitle}>현장 동선 영상 기록</span>
               </div>
 
-              {/* 1. 도면 선택 버튼 (클릭 시 모달 오픈) */}
+              {/* 1. 이 프로젝트에 미리 등록된 도면이 여러 개면 선택 */}
+              {projectDrawings.length > 1 && (
+                <div style={{ ...styles.inputWithIcon, padding: '12px', gap: '8px', marginBottom: '10px' }}>
+                  <select
+                    value={selectedDrawingIndex}
+                    onChange={(e) => setSelectedDrawingIndex(Number(e.target.value))}
+                    style={{ flex: 1, border: 'none', fontSize: '15px', background: 'transparent' }}
+                  >
+                    {projectDrawings.map((d, i) => (
+                      <option key={d.file} value={i}>{d.name}</option>
+                    ))}
+                  </select>
+                  <FaFileAlt color="#3498DB" size={20} />
+                </div>
+              )}
+
+              {/* 1-1. ACC floor_plan 폴더의 DWG를 즉석에서 선택 */}
               <div
-                style={{ ...styles.inputWithIcon, cursor: 'pointer', padding: '12px', justifyContent: 'space-between' }}
-                onClick={loadPlanList}
+                style={{ ...styles.inputWithIcon, cursor: 'pointer', padding: '12px', justifyContent: 'space-between', marginBottom: '10px' }}
+                onClick={loadDwgList}
               >
-                <span style={{ fontSize: '15px', color: selectedPlanItem ? '#2C3E50' : '#000000', fontWeight: selectedPlanItem ? 'bold' : 'normal' }}>
-                  {selectedPlanItem ? selectedPlanItem.attributes.displayName : 'ACC에서 도면(PDF) 선택...'}
+                <span style={{ fontSize: '15px', color: selectedDwgName ? '#2C3E50' : '#000000', fontWeight: selectedDwgName ? 'bold' : 'normal' }}>
+                  {selectedDwgName || 'ACC에서 도면(DWG) 선택...'}
                 </span>
                 <FaFileAlt color="#3498DB" size={20} />
               </div>
 
-              {/* 1-1. GPS ↔ 도면 기준점 보정 */}
-              <button
-                type="button"
-                onClick={startCalibration}
-                disabled={!selectedPlanItem}
-                style={{ ...styles.btnCamera, backgroundColor: !selectedPlanItem ? '#BDC3C7' : (dwgCalibration ? '#27AE60' : '#8E44AD'), width: '100%', marginBottom: '10px' }}
-              >
-                {dwgCalibration ? '✅ 기준점 설정됨 (다시 설정)' : '🎯 기준점 설정 (GPS 보정)'}
-              </button>
+              {/* 2. 도면 오버레이 지도 및 실시간 카메라 뷰 */}
+              <div style={{ position: 'relative', width: '100%', height: '350px', backgroundColor: '#ecf0f1', borderRadius: '5px', overflow: 'hidden', marginBottom: '15px', border: '1px solid #D5D8DC' }}>
 
-              {/* 2. 도면 캔버스 및 실시간 카메라 뷰 */}
-              <div style={{ position: 'relative', width: '100%', height: '350px', backgroundColor: '#ecf0f1', borderRadius: '5px', overflow: 'auto', marginBottom: '15px', border: '1px solid #D5D8DC' }}>
+                <iframe
+                  ref={mapIframeRef}
+                  title="현장 도면 GPS 지도"
+                  src={`/kakao-map.html?key=${encodeURIComponent(KAKAO_JS_KEY)}`}
+                  allow="geolocation"
+                  style={{ width: '100%', height: '100%', border: 'none' }}
+                />
 
-                {/* 도면 PDF가 그려지는 캔버스 (사진대지와 동일한 렌더링 방식) */}
-                <div style={{ position: 'relative', display: 'inline-block' }}>
-                  <canvas
-                    ref={planCanvasRef}
-                    onClick={handlePlanCanvasClick}
-                    style={{ maxWidth: '100%', display: selectedPlanItem ? 'block' : 'none', cursor: calibHint ? 'crosshair' : 'default' }}
-                  />
-
-                  {/* 촬영 중 이동 경로 선 (클릭 통과) */}
-                  <canvas
-                    ref={pathCanvasRef}
-                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 500 }}
-                  />
-
-                  {/* GPS 마커 */}
-                  <div
-                    ref={markerRef}
-                    style={{
-                      position: 'absolute',
-                      width: '20px', height: '20px',
-                      backgroundColor: '#E74C3C',
-                      borderRadius: '50%',
-                      border: '3px solid white',
-                      boxShadow: '0 2px 5px rgba(0,0,0,0.5)',
-                      display: 'none',
-                      zIndex: 9999,
-                      pointerEvents: 'none',
-                      transition: 'left 0.1s linear, top 0.1s linear'
-                    }}
-                  />
-                </div>
-
-                {!selectedPlanItem && (
-                   <div style={{ position: 'absolute', top: '45%', left: '0', width: '100%', textAlign: 'center', color: '#95A5A6', zIndex: 1 }}>
-                     상단 버튼을 눌러 도면을 선택해주세요
-                   </div>
-                )}
-
-                {planLoadStatus && (
+                {dwgParseStatus && (
                    <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', padding: '10px', boxSizing: 'border-box', textAlign: 'center', color: '#fff', backgroundColor: 'rgba(44, 62, 80, 0.85)', fontSize: '13px', whiteSpace: 'pre-wrap', zIndex: 1000 }}>
-                     {planLoadStatus}
-                   </div>
-                )}
-
-                {!planLoadStatus && calibHint && (
-                   <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', padding: '10px', boxSizing: 'border-box', textAlign: 'center', color: '#fff', backgroundColor: 'rgba(142, 68, 173, 0.9)', fontSize: '13px', whiteSpace: 'pre-wrap', zIndex: 1000 }}>
-                     {calibHint}
+                     {dwgParseStatus}
                    </div>
                 )}
 
@@ -928,24 +762,24 @@ export default function App() {
       )}
 
       {/* ============================================== */}
-      {/* 🎥 도면(PDF) 목록 모달 (영상기록용) */}
+      {/* 🎥 도면(DWG) 목록 모달 (영상기록용) */}
       {/* ============================================== */}
-      {showPlanModal && (
+      {showDwgModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
             <div style={styles.modalHeader}>
-              <h3 style={{ margin: 0, color: '#2c3e50' }}>현장 도면 목록</h3>
-              <button onClick={() => setShowPlanModal(false)} style={styles.closeBtn}><FaTimes /></button>
+              <h3 style={{ margin: 0, color: '#2c3e50' }}>현장 도면(DWG) 목록</h3>
+              <button onClick={() => setShowDwgModal(false)} style={styles.closeBtn}><FaTimes /></button>
             </div>
             <div style={styles.modalBody}>
-              {loadingPlanList ? ( <div style={{ textAlign: 'center', padding: '20px', color: '#7f8c8d' }}>도면 폴더 스캔 중...</div> ) : planList.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '20px', color: '#e74c3c' }}>해당 폴더에 PDF 도면 파일이 없습니다.</div>
+              {loadingDwgList ? ( <div style={{ textAlign: 'center', padding: '20px', color: '#7f8c8d' }}>도면 폴더 스캔 중...</div> ) : dwgList.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: '#e74c3c' }}>해당 폴더에 DWG 도면 파일이 없습니다.</div>
               ) : (
                 <ul style={{ listStyle: 'none', padding: 0, margin: 0, marginBottom: '10px' }}>
-                  {planList.map(plan => (
-                    <li key={plan.id} style={styles.planItem} onClick={() => viewPlan(plan)}>
+                  {dwgList.map(item => (
+                    <li key={item.id} style={styles.planItem} onClick={() => selectDwg(item)}>
                       <FaFileAlt style={{ marginRight: '10px', color: '#3498DB', fontSize: '18px' }}/>
-                      <span style={{ fontSize: '14px', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{plan.attributes.displayName}</span>
+                      <span style={{ fontSize: '14px', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.attributes.displayName}</span>
                     </li>
                   ))}
                 </ul>

@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <style>
+    html, body, #map { width: 100%; height: 100%; margin: 0; padding: 0; }
+    #trackingControls {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      z-index: 1000;
+      display: flex;
+      gap: 8px;
+    }
+    #trackingControls button {
+      border: none;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    }
+    #btnStartTracking {
+      background: #3478f6;
+      color: #fff;
+    }
+    #btnFinishTracking {
+      background: #e53935;
+      color: #fff;
+    }
+    #trackingControls button:disabled {
+      background: #bbb;
+      color: #eee;
+      box-shadow: none;
+    }
+    #coordPanel {
+      display: none;
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 24px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 12px;
+      padding: 14px;
+      font-family: -apple-system, Roboto, sans-serif;
+      font-size: 13px;
+      color: #111;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    }
+    #coordPanel .title {
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    #coordPanel .row {
+      display: flex;
+      justify-content: space-between;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="trackingControls">
+    <button id="btnStartTracking">위치 추적 시작</button>
+    <button id="btnFinishTracking" disabled>완료</button>
+  </div>
+  <div id="coordPanel"></div>
+  <script>
+    var DEFAULT_CENTER = { lat: 37.5665, lng: 126.978 }; // 서울시청 (첫 GPS fix 전 기본값)
+
+    // React Native WebView 안이면 그쪽 브리지로, 일반 브라우저에서 iframe으로 열렸으면
+    // 부모 창(window.parent)으로 보낸다. (site_log_web은 후자 경로를 쓴다.)
+    function notifyParent(msg) {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify(msg));
+      } else if (window.parent && window.parent !== window) {
+        window.parent.postMessage(msg, window.location.origin);
+      }
+    }
+    function reportError(message) {
+      notifyParent({ type: 'error', message: message });
+    }
+    function reportDebug(message) {
+      notifyParent({ type: 'debug', message: message });
+    }
+    window.onerror = function (message) {
+      reportError('window.onerror: ' + message);
+    };
+    window.alert = function (message) {
+      reportError('카카오 SDK alert: ' + message);
+    };
+
+    var appKey = new URLSearchParams(window.location.search).get('key');
+    reportDebug('location.href = ' + location.href);
+
+    if (!appKey) {
+      reportError('URL에 key 파라미터가 없습니다.');
+    } else {
+      var script = document.createElement('script');
+      script.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=' + encodeURIComponent(appKey) + '&autoload=false';
+      script.onerror = function () {
+        reportError('카카오맵 SDK <script> 태그 로드 실패 (network error 이벤트 발생)');
+      };
+      script.onload = function () {
+        if (typeof kakao === 'undefined' || !kakao.maps) {
+          reportError('스크립트는 로드됐지만 kakao 객체가 없습니다.');
+          return;
+        }
+        kakao.maps.load(initMap);
+      };
+      document.head.appendChild(script);
+    }
+
+    var map = null;
+    var userMarker = null;
+    var accuracyCircle = null;
+    var hasCenteredOnUser = false;
+    var tapMarker = null;
+    var userPath = [];
+    var userTrail = null;
+    var isTracking = false;
+
+    function updateTrackingButtons() {
+      document.getElementById('btnStartTracking').disabled = isTracking;
+      document.getElementById('btnFinishTracking').disabled = !isTracking;
+    }
+
+    function startTracking() {
+      isTracking = true;
+      userPath = [];
+      if (userTrail) {
+        userTrail.setMap(null);
+        userTrail = null;
+      }
+      updateTrackingButtons();
+    }
+
+    function finishTracking() {
+      isTracking = false;
+      updateTrackingButtons();
+    }
+
+    document.getElementById('btnStartTracking').addEventListener('click', startTracking);
+    document.getElementById('btnFinishTracking').addEventListener('click', finishTracking);
+
+    // WGS84 위경도 -> UTM-K(EPSG:5179, GRS80) 투영좌표 변환.
+    // Snyder Transverse Mercator 정방향 공식 사용, 국내 범위에서 서브미터 정밀도.
+    function latLngToUtmK(lat, lng) {
+      var a = 6378137.0; // GRS80 장반경
+      var f = 1 / 298.257222101; // GRS80 편평률
+      var e2 = f * (2 - f);
+      var e4 = e2 * e2;
+      var e6 = e4 * e2;
+      var ep2 = e2 / (1 - e2);
+
+      var lat0 = (38 * Math.PI) / 180;
+      var lon0 = (127.5 * Math.PI) / 180;
+      var k0 = 0.9996;
+      var falseEasting = 1000000;
+      var falseNorthing = 2000000;
+
+      function meridianArc(phi) {
+        var A0 = 1 - e2 / 4 - (3 * e4) / 64 - (5 * e6) / 256;
+        var B0 = (3 / 8) * (e2 + e4 / 4 + (15 * e6) / 128);
+        var C0 = (15 / 256) * (e4 + (3 * e6) / 4);
+        var D0 = (35 / 3072) * e6;
+        return a * (A0 * phi - B0 * Math.sin(2 * phi) + C0 * Math.sin(4 * phi) - D0 * Math.sin(6 * phi));
+      }
+
+      var latRad = (lat * Math.PI) / 180;
+      var lonRad = (lng * Math.PI) / 180;
+
+      var M = meridianArc(latRad);
+      var M0 = meridianArc(lat0);
+
+      var sinLat = Math.sin(latRad);
+      var cosLat = Math.cos(latRad);
+      var tanLat = Math.tan(latRad);
+
+      var N = a / Math.sqrt(1 - e2 * sinLat * sinLat);
+      var T = tanLat * tanLat;
+      var C = ep2 * cosLat * cosLat;
+      var Adash = (lonRad - lon0) * cosLat;
+
+      var easting =
+        k0 *
+          N *
+          (Adash +
+            ((1 - T + C) * Math.pow(Adash, 3)) / 6 +
+            ((5 - 18 * T + T * T + 72 * C - 58 * ep2) * Math.pow(Adash, 5)) / 120) +
+        falseEasting;
+
+      var northing =
+        k0 *
+          (M -
+            M0 +
+            N *
+              tanLat *
+              (Math.pow(Adash, 2) / 2 +
+                ((5 - T + 9 * C + 4 * C * C) * Math.pow(Adash, 4)) / 24 +
+                ((61 - 58 * T + T * T + 600 * C - 330 * ep2) * Math.pow(Adash, 6)) / 720)) +
+        falseNorthing;
+
+      return { x: easting, y: northing };
+    }
+
+    // UTM-K(EPSG:5179, GRS80) 투영좌표 -> WGS84 위경도 역변환.
+    // Footpoint latitude를 이용한 표준 Transverse Mercator 역해법 (Snyder 공식).
+    function utmKToLatLng(x, y) {
+      var a = 6378137.0;
+      var f = 1 / 298.257222101;
+      var e2 = f * (2 - f);
+      var e4 = e2 * e2;
+      var e6 = e4 * e2;
+      var ep2 = e2 / (1 - e2);
+
+      var lat0 = (38 * Math.PI) / 180;
+      var lon0 = (127.5 * Math.PI) / 180;
+      var k0 = 0.9996;
+      var falseEasting = 1000000;
+      var falseNorthing = 2000000;
+
+      function meridianArc(phi) {
+        var A0 = 1 - e2 / 4 - (3 * e4) / 64 - (5 * e6) / 256;
+        var B0 = (3 / 8) * (e2 + e4 / 4 + (15 * e6) / 128);
+        var C0 = (15 / 256) * (e4 + (3 * e6) / 4);
+        var D0 = (35 / 3072) * e6;
+        return a * (A0 * phi - B0 * Math.sin(2 * phi) + C0 * Math.sin(4 * phi) - D0 * Math.sin(6 * phi));
+      }
+
+      var M0 = meridianArc(lat0);
+      var M = M0 + (y - falseNorthing) / k0;
+
+      var e1 = (1 - Math.sqrt(1 - e2)) / (1 + Math.sqrt(1 - e2));
+      var mu = M / (a * (1 - e2 / 4 - (3 * e4) / 64 - (5 * e6) / 256));
+
+      var footLat =
+        mu +
+        ((3 * e1) / 2 - (27 * Math.pow(e1, 3)) / 32) * Math.sin(2 * mu) +
+        ((21 * e1 * e1) / 16 - (55 * Math.pow(e1, 4)) / 32) * Math.sin(4 * mu) +
+        ((151 * Math.pow(e1, 3)) / 96) * Math.sin(6 * mu) +
+        ((1097 * Math.pow(e1, 4)) / 512) * Math.sin(8 * mu);
+
+      var sinFoot = Math.sin(footLat);
+      var cosFoot = Math.cos(footLat);
+      var tanFoot = Math.tan(footLat);
+
+      var N1 = a / Math.sqrt(1 - e2 * sinFoot * sinFoot);
+      var T1 = tanFoot * tanFoot;
+      var C1 = ep2 * cosFoot * cosFoot;
+      var R1 = (a * (1 - e2)) / Math.pow(1 - e2 * sinFoot * sinFoot, 1.5);
+      var D = (x - falseEasting) / (N1 * k0);
+
+      var lat =
+        footLat -
+        ((N1 * tanFoot) / R1) *
+          (Math.pow(D, 2) / 2 -
+            ((5 + 3 * T1 + 10 * C1 - 4 * C1 * C1 - 9 * ep2) * Math.pow(D, 4)) / 24 +
+            ((61 + 90 * T1 + 298 * C1 + 45 * T1 * T1 - 252 * ep2 - 3 * C1 * C1) * Math.pow(D, 6)) / 720);
+
+      var lon =
+        lon0 +
+        (D -
+          ((1 + 2 * T1 + C1) * Math.pow(D, 3)) / 6 +
+          ((5 - 2 * C1 + 28 * T1 - 3 * C1 * C1 + 8 * ep2 + 24 * T1 * T1) * Math.pow(D, 5)) / 120) /
+          cosFoot;
+
+      return { lat: (lat * 180) / Math.PI, lng: (lon * 180) / Math.PI };
+    }
+
+    // 최초 로드 시 자동으로 띄워볼 도면 목록 (?drawing= 파라미터, 단독 테스트/gps-dwg-mapping 앱용).
+    // site_log_web은 이 파라미터 대신 postMessage({type:'renderDrawing', ...})로 도면을 넣어준다.
+    var DRAWING_FILES = new URLSearchParams(window.location.search).getAll('drawing');
+
+    var activeOverlays = []; // renderDrawingData()로 그린 Polygon/Polyline들, clearDrawingOverlays()로 지움
+
+    function clearDrawingOverlays() {
+      activeOverlays.forEach(function (overlay) { overlay.setMap(null); });
+      activeOverlays = [];
+    }
+
+    // { polylines: [[[x,y],...], ...], hull: [[x,y],...] } (UTM-K 좌표) 하나를 지도 위에 그림.
+    // 반환값: { bounds, count } — 호출부에서 여러 개를 합쳐 setBounds 하거나 drawingLoaded 개수를 셀 때 씀.
+    function renderDrawingData(data) {
+      var bounds = new kakao.maps.LatLngBounds();
+      var hasBoundsPoint = false;
+
+      if (Array.isArray(data.hull) && data.hull.length >= 3) {
+        var hullPath = data.hull.map(function (pt) {
+          var ll = utmKToLatLng(pt[0], pt[1]);
+          return new kakao.maps.LatLng(ll.lat, ll.lng);
+        });
+        var hullPolygon = new kakao.maps.Polygon({
+          map: map,
+          path: hullPath,
+          fillColor: '#ffffff',
+          fillOpacity: 1,
+          strokeWeight: 1,
+          strokeColor: '#ffffff',
+          strokeOpacity: 1,
+          zIndex: 1,
+        });
+        activeOverlays.push(hullPolygon);
+      }
+
+      (data.polylines || []).forEach(function (polyline) {
+        if (polyline.length < 2) return;
+        var path = polyline.map(function (pt) {
+          var ll = utmKToLatLng(pt[0], pt[1]);
+          var latlng = new kakao.maps.LatLng(ll.lat, ll.lng);
+          bounds.extend(latlng);
+          hasBoundsPoint = true;
+          return latlng;
+        });
+        var line = new kakao.maps.Polyline({
+          map: map,
+          path: path,
+          strokeWeight: 2,
+          strokeColor: '#444444',
+          strokeOpacity: 0.85,
+          strokeStyle: 'solid',
+          zIndex: 2,
+        });
+        activeOverlays.push(line);
+      });
+
+      return { bounds: bounds, hasBoundsPoint: hasBoundsPoint, count: (data.polylines || []).length };
+    }
+
+    function loadDwgOverlay() {
+      var bounds = new kakao.maps.LatLngBounds();
+      var hasBoundsPoint = false;
+      var totalPolylines = 0;
+      var pending = DRAWING_FILES.length;
+      if (pending === 0) return;
+
+      DRAWING_FILES.forEach(function (url) {
+        fetch(url)
+          .then(function (res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+          })
+          .then(function (data) {
+            var result = renderDrawingData(data);
+            if (result.hasBoundsPoint) { bounds = mergeBounds(bounds, result.bounds); hasBoundsPoint = true; }
+            totalPolylines += result.count;
+          })
+          .catch(function (err) {
+            reportError('도면 로드 실패 (' + url + '): ' + (err && err.message ? err.message : err));
+          })
+          .then(function () {
+            pending -= 1;
+            if (pending === 0) {
+              if (hasBoundsPoint) map.setBounds(bounds);
+              notifyParent({ type: 'drawingLoaded', count: totalPolylines });
+            }
+          });
+      });
+    }
+
+    function mergeBounds(a, b) {
+      var merged = new kakao.maps.LatLngBounds(a.getSouthWest(), a.getNorthEast());
+      merged.extend(b.getSouthWest());
+      merged.extend(b.getNorthEast());
+      return merged;
+    }
+
+    // 부모 창(site_log_web)에서 오는 메시지: 미리 변환해둔 등록 도면이든, 방금 ACC에서
+    // 골라 브라우저에서 즉석 파싱한 DWG든 전부 이 경로로 들어온다.
+    window.addEventListener('message', function (event) {
+      var msg = event.data;
+      if (!msg || typeof msg !== 'object') return;
+      if (msg.type === 'renderDrawing') {
+        clearDrawingOverlays();
+        var result = renderDrawingData(msg);
+        if (result.hasBoundsPoint && map) map.setBounds(result.bounds);
+        notifyParent({ type: 'drawingLoaded', count: result.count });
+      } else if (msg.type === 'clearDrawing') {
+        clearDrawingOverlays();
+      }
+    });
+
+    function initMap() {
+      try {
+        var container = document.getElementById('map');
+        var options = {
+          center: new kakao.maps.LatLng(DEFAULT_CENTER.lat, DEFAULT_CENTER.lng),
+          level: 3,
+        };
+        map = new kakao.maps.Map(container, options);
+        kakao.maps.event.addListener(map, 'click', handleMapClick);
+        loadDwgOverlay();
+        notifyParent({ type: 'ready' });
+        if (!window.ReactNativeWebView) {
+          startBrowserGeolocation();
+        }
+      } catch (error) {
+        reportError('initMap 실패: ' + (error && error.message ? error.message : error));
+      }
+    }
+
+    // RN WebView 밖(일반 브라우저로 직접 열었을 때)에서는 앱이 위치를 주입해주지 않으므로
+    // 브라우저 자체의 geolocation으로 대신 채운다. RN 앱 안에서는 이 경로를 타지 않는다.
+    function startBrowserGeolocation() {
+      if (!navigator.geolocation) {
+        reportError('이 브라우저는 GPS(geolocation)를 지원하지 않습니다.');
+        return;
+      }
+      navigator.geolocation.watchPosition(
+        function (pos) {
+          setUserLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+        },
+        function (err) {
+          reportError('브라우저 GPS 오류: ' + err.message);
+        },
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 }
+      );
+    }
+
+    function handleMapClick(mouseEvent) {
+      var latlng = mouseEvent.latLng;
+      var lat = latlng.getLat();
+      var lng = latlng.getLng();
+      var utmk = latLngToUtmK(lat, lng);
+
+      if (!tapMarker) {
+        var tapMarkerSvg =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">' +
+          '<circle cx="12" cy="12" r="8" fill="#e53935" stroke="white" stroke-width="2"/></svg>';
+        tapMarker = new kakao.maps.Marker({
+          position: latlng,
+          map: map,
+          image: new kakao.maps.MarkerImage(
+            'data:image/svg+xml;base64,' + btoa(tapMarkerSvg),
+            new kakao.maps.Size(24, 24)
+          ),
+        });
+      } else {
+        tapMarker.setPosition(latlng);
+      }
+
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(
+          JSON.stringify({
+            type: 'mapClick',
+            lat: lat,
+            lng: lng,
+            utmkX: utmk.x,
+            utmkY: utmk.y,
+          })
+        );
+      } else {
+        var panel = document.getElementById('coordPanel');
+        panel.style.display = 'block';
+        panel.innerHTML =
+          '<div class="title">탭한 위치 좌표</div>' +
+          '<div class="row"><span>위도</span><span>' + lat.toFixed(6) + '</span></div>' +
+          '<div class="row"><span>경도</span><span>' + lng.toFixed(6) + '</span></div>' +
+          '<div class="row"><span>UTM-K X</span><span>' + utmk.x.toFixed(2) + ' m</span></div>' +
+          '<div class="row"><span>UTM-K Y</span><span>' + utmk.y.toFixed(2) + ' m</span></div>';
+      }
+    }
+
+    // React Native 쪽에서 injectJavaScript로 호출한다.
+    window.setUserLocation = function (lat, lng, accuracy) {
+      if (!map) return;
+      var position = new kakao.maps.LatLng(lat, lng);
+
+      if (!userMarker) {
+        userMarker = new kakao.maps.Marker({ position: position, map: map });
+      } else {
+        userMarker.setPosition(position);
+      }
+
+      var radius = typeof accuracy === 'number' && accuracy > 0 ? accuracy : 0;
+      if (!accuracyCircle) {
+        accuracyCircle = new kakao.maps.Circle({
+          center: position,
+          radius: radius,
+          strokeWeight: 1,
+          strokeColor: '#3478f6',
+          strokeOpacity: 0.6,
+          fillColor: '#3478f6',
+          fillOpacity: 0.15,
+          map: map,
+        });
+      } else {
+        accuracyCircle.setPosition(position);
+        accuracyCircle.setRadius(radius);
+      }
+
+      if (!hasCenteredOnUser) {
+        map.setCenter(position);
+        hasCenteredOnUser = true;
+      }
+
+      if (!isTracking) return;
+
+      var lastPoint = userPath[userPath.length - 1];
+      var isDuplicate = lastPoint && lastPoint.getLat() === lat && lastPoint.getLng() === lng;
+      if (!isDuplicate) {
+        userPath.push(position);
+        if (userPath.length >= 2) {
+          if (!userTrail) {
+            userTrail = new kakao.maps.Polyline({
+              map: map,
+              path: userPath,
+              strokeWeight: 4,
+              strokeColor: '#3478f6',
+              strokeOpacity: 0.8,
+              strokeStyle: 'solid',
+            });
+          } else {
+            userTrail.setPath(userPath);
+          }
+        }
+      }
+    };
+  </script>
+</body>
+</html>

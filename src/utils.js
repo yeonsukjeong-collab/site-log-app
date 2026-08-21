@@ -1,9 +1,14 @@
 import CryptoJS from 'crypto-js'; 
 
-export const CLIENT_ID = 'OKTcz8ajCfiPi58oU4bNpZc0hGXpGFG2GPJPG6EEMhO02QRa'; 
+export const CLIENT_ID = 'OKTcz8ajCfiPi58oU4bNpZc0hGXpGFG2GPJPG6EEMhO02QRa';
 export const REDIRECT_URI = window.location.origin;
 // 💡 뷰어 렌더링 권한인 'viewables:read'를 반드시 추가해야 합니다.
 export const SCOPES = 'data:read data:write data:create viewables:read';
+
+// 🗺️ 영상기록 탭의 GPS-도면 오버레이 지도용 카카오맵 JS 키.
+// 도메인 화이트리스트로 제한되는 공개 키라 CLIENT_ID와 같은 방식으로 코드에 둔다.
+// 카카오 디벨로퍼스 콘솔의 "Web 플랫폼 도메인"에 이 앱이 뜨는 모든 주소(localhost, LAN IP, 배포 주소)를 등록해야 지도가 로드된다.
+export const KAKAO_JS_KEY = 'b743ae7a4c4a88894b5c0ecc3219d5dd';
 
 export function generateRandomString(length) {
   const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
