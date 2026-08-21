@@ -60,6 +60,7 @@ export default function App() {
   // ==========================================
   const mapIframeRef = useRef(null); // 도면+GPS를 보여주는 kakao-map.html iframe
   const [mapReady, setMapReady] = useState(false); // iframe이 {type:'ready'}를 보내면 true
+  const [mapError, setMapError] = useState(''); // iframe에서 온 {type:'error'} 메시지 (지도 SDK/GPS 오류 등)
   const pendingDrawingRef = useRef(null); // mapReady 되기 전에 보내려던 도면 데이터 대기열
   const [selectedDrawingIndex, setSelectedDrawingIndex] = useState(0);
 
@@ -360,10 +361,17 @@ export default function App() {
   useEffect(() => {
     const handleMapMessage = (event) => {
       if (event.source !== mapIframeRef.current?.contentWindow) return;
-      if (event.data?.type !== 'ready') return;
-      setMapReady(true);
-      if (pendingDrawingRef.current) {
-        mapIframeRef.current.contentWindow.postMessage({ type: 'renderDrawing', ...pendingDrawingRef.current }, window.location.origin);
+      const msg = event.data;
+      if (msg?.type === 'ready') {
+        setMapReady(true);
+        setMapError('');
+        if (pendingDrawingRef.current) {
+          mapIframeRef.current.contentWindow.postMessage({ type: 'renderDrawing', ...pendingDrawingRef.current }, window.location.origin);
+        }
+      } else if (msg?.type === 'error') {
+        setMapError(msg.message || '지도에서 알 수 없는 오류가 발생했습니다.');
+      } else if (msg?.type === 'debug') {
+        console.debug('[kakao-map]', msg.message);
       }
     };
     window.addEventListener('message', handleMapMessage);
@@ -687,6 +695,12 @@ export default function App() {
                 {dwgParseStatus && (
                    <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', padding: '10px', boxSizing: 'border-box', textAlign: 'center', color: '#fff', backgroundColor: 'rgba(44, 62, 80, 0.85)', fontSize: '13px', whiteSpace: 'pre-wrap', zIndex: 1000 }}>
                      {dwgParseStatus}
+                   </div>
+                )}
+
+                {mapError && (
+                   <div style={{ position: 'absolute', bottom: 0, left: 0, width: '100%', padding: '10px', boxSizing: 'border-box', textAlign: 'center', color: '#fff', backgroundColor: 'rgba(192, 57, 43, 0.9)', fontSize: '12px', whiteSpace: 'pre-wrap', zIndex: 1000 }}>
+                     ⚠️ {mapError}
                    </div>
                 )}
               </div>

@@ -88,12 +88,14 @@
     var userPath = [];
     var userTrail = null;
     var isTracking = false;
+    var lastTrackedUtm = null; // 직전에 궤적에 찍은 지점(UTM-K), 중복/노이즈 좌표 걸러내는 데 씀
 
     // 부모 창(site_log_web)에서 영상 촬영 시작/종료에 맞춰 직접 호출한다
     // (mapIframeRef.current.contentWindow.startTracking() / .finishTracking()).
     function startTracking() {
       isTracking = true;
       userPath = [];
+      lastTrackedUtm = null;
       if (userTrail) {
         userTrail.setMap(null);
         userTrail = null;
@@ -457,9 +459,15 @@
 
       if (!isTracking) return;
 
-      var lastPoint = userPath[userPath.length - 1];
-      var isDuplicate = lastPoint && lastPoint.getLat() === lat && lastPoint.getLng() === lng;
-      if (!isDuplicate) {
+      // 완전히 같은 좌표일 때만 걸러내면, Wi-Fi/네트워크 기반 위치처럼 거의 똑같은
+      // 좌표가 반복될 때 궤적이 한 점에서 멈춘다. 실제 이동 거리(1m 이상)로 판단한다.
+      var movedEnoughFromLast = true;
+      if (lastTrackedUtm) {
+        var newUtm = latLngToUtmK(lat, lng);
+        movedEnoughFromLast = Math.hypot(newUtm.x - lastTrackedUtm.x, newUtm.y - lastTrackedUtm.y) >= 1;
+      }
+      if (movedEnoughFromLast) {
+        lastTrackedUtm = latLngToUtmK(lat, lng);
         userPath.push(position);
         if (userPath.length >= 2) {
           if (!userTrail) {
