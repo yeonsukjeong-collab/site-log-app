@@ -691,35 +691,31 @@ export default function App() {
                 )}
               </div>
 
-              {/* 3. 실시간 카메라 뷰 (지도 아래, 정사각형) */}
-              <div style={{ width: '100%', display: 'flex', justifyContent: 'center', marginBottom: '15px' }}>
-                <div style={{ width: '200px', height: '200px', backgroundColor: '#000', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 5px rgba(0,0,0,0.3)' }}>
-                   <video ref={videoPreviewRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }} autoPlay muted playsInline />
-                </div>
+              {/* 3. 실시간 카메라 뷰 (지도와 같은 폭, 그에 준해 높이도 키움) */}
+              <div style={{ width: '100%', height: '233px', backgroundColor: '#000', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 5px rgba(0,0,0,0.3)', marginBottom: '15px' }}>
+                 <video ref={videoPreviewRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }} autoPlay muted playsInline />
               </div>
 
-              {/* 4. 촬영 컨트롤 버튼 */}
+              {/* 4. 촬영/업로드 버튼 (한 줄, 동일 크기) */}
               <div style={styles.buttonRow}>
                 {!isRecording ? (
-                  <button type="button" style={{ ...styles.btnCamera, backgroundColor: '#E74C3C' }} onClick={handleStartRecording}>
+                  <button type="button" style={{ ...styles.btnCamera, backgroundColor: '#E74C3C', height: '55px', fontSize: '16px' }} onClick={handleStartRecording}>
                     <FaVideo style={{ marginRight: '5px' }} /> 영상 촬영 시작
                   </button>
                 ) : (
-                  <button type="button" style={{ ...styles.btnCamera, backgroundColor: '#34495E' }} onClick={handleStopRecording}>
+                  <button type="button" style={{ ...styles.btnCamera, backgroundColor: '#34495E', height: '55px', fontSize: '16px' }} onClick={handleStopRecording}>
                     <FaStop style={{ marginRight: '5px' }} /> 촬영 종료
                   </button>
                 )}
+                <button
+                  type="button"
+                  style={{ ...styles.btnUpload, width: 'auto', flex: 1, backgroundColor: (videoBlob && !isUploadingVideo) ? '#E67E22' : '#BDC3C7' }}
+                  disabled={!videoBlob || isUploadingVideo}
+                  onClick={handleUploadVideoToACC}
+                >
+                  <FaCloudUploadAlt style={{ marginRight: '8px', fontSize: '18px' }} /> {isUploadingVideo ? '업로드 중...' : 'ACC 업로드'}
+                </button>
               </div>
-
-              {/* 5. 최종 업로드 버튼 */}
-              <button
-                type="button"
-                style={{ ...styles.btnUpload, backgroundColor: (videoBlob && !isUploadingVideo) ? '#E67E22' : '#BDC3C7' }}
-                disabled={!videoBlob || isUploadingVideo}
-                onClick={handleUploadVideoToACC}
-              >
-                <FaCloudUploadAlt style={{ marginRight: '8px', fontSize: '18px' }} /> {isUploadingVideo ? '업로드 진행 중...' : '촬영된 영상 ACC 업로드'}
-              </button>
             </div>
           )}
 
