@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { FaCamera, FaVideo, FaHardHat, FaList, FaSync, FaFileAlt, FaCloudUploadAlt, FaImage, FaTimes, FaPlus, FaTrashAlt, FaStop } from 'react-icons/fa';
 import { SiAutodesk } from 'react-icons/si';
 import { jsPDF } from 'jspdf';
@@ -16,6 +17,8 @@ import { parseDwgToDrawing } from './dwgParser';
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [accessToken, setAccessToken] = useState('');
+  const [userProfile, setUserProfile] = useState(null); // { given_name, family_name, name, ... }
+  const [videoLogPdfData, setVideoLogPdfData] = useState(null); // { dateStr, timeStr, author, snapshotUrl } — ACC 업로드 시 잠깐 채워서 캡처용으로만 씀
   
   // 💡 탭 상태 관리 ('photo' = 사진대지, 'video' = 영상기록)
   const [activeMenu, setActiveMenu] = useState('photo');
@@ -81,6 +84,8 @@ export default function App() {
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const recordingMimeTypeRef = useRef('video/webm');
+  const videoStartTimeRef = useRef(null);
+  const videoEndTimeRef = useRef(null);
 
   // ------------------------------------------
   // 공통 로그인 및 프로젝트 로드 로직
@@ -156,6 +161,15 @@ export default function App() {
       }
       fetchProjects();
     }
+  }, [accessToken]);
+
+  // 동영상 기록 PDF의 "작성자"란에 쓸 ACC 로그인 사용자 이름
+  useEffect(() => {
+    if (!accessToken) return;
+    fetch('https://api.userprofile.autodesk.com/userinfo', { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then(res => res.json())
+      .then(data => setUserProfile(data))
+      .catch(err => console.error('사용자 정보 조회 에러:', err));
   }, [accessToken]);
 
   // 🎥 영상기록 탭이 열려있는 동안 카메라 스트림을 켜서 PIP 미리보기에 연결
@@ -405,6 +419,23 @@ export default function App() {
     }
   };
 
+  // 도면 윤곽 + 촬영 중 이동 경로를 그린 이미지(PNG data URL)를 지도(iframe)에 요청.
+  // 실제 카카오 지도 타일은 CORS 때문에 캡처가 안 돼서, iframe이 갖고 있는 좌표로
+  // 직접 캔버스에 그려서 돌려준다 (kakao-map.html의 captureSnapshot 참고).
+  const requestMapSnapshot = () => new Promise((resolve) => {
+    const win = mapIframeRef.current?.contentWindow;
+    if (!win) return resolve(null);
+    const timeoutId = setTimeout(() => { window.removeEventListener('message', handler); resolve(null); }, 3000);
+    function handler(event) {
+      if (event.source !== win || event.data?.type !== 'snapshot') return;
+      clearTimeout(timeoutId);
+      window.removeEventListener('message', handler);
+      resolve(event.data.dataUrl || null);
+    }
+    window.addEventListener('message', handler);
+    win.postMessage({ type: 'captureSnapshot' }, window.location.origin);
+  });
+
   // SITE_DRAWINGS 레지스트리에서 도면을 고르면 정적 JSON을 읽어 지도로 보냄
   useEffect(() => {
     if (!selectedDrawing) return;
@@ -477,6 +508,8 @@ export default function App() {
 
     recordedChunksRef.current = [];
     setVideoBlob(null);
+    videoStartTimeRef.current = new Date();
+    videoEndTimeRef.current = null;
 
     // 촬영 중 이동 경로를 지도 위에 표시 (kakao-map.html의 위치추적 시작)
     mapIframeRef.current?.contentWindow?.startTracking?.();
@@ -507,6 +540,7 @@ export default function App() {
     mapIframeRef.current?.contentWindow?.finishTracking?.();
     isRecordingRef.current = false;
     setIsRecording(false);
+    videoEndTimeRef.current = new Date();
   };
 
   const handleUploadVideoToACC = async () => {
@@ -526,8 +560,9 @@ export default function App() {
       const videoFolder = (await siteLogContentsRes.json()).data.find(item => item.attributes.name === 'site_video');
       if (!videoFolder) throw new Error("'site_video' 폴더를 찾을 수 없습니다. ACC의 Site_log 폴더 안에 먼저 만들어주세요.");
 
+      const ts = new Date().getTime();
       const ext = videoBlob.type.includes('mp4') ? 'mp4' : 'webm';
-      const fileName = `현장영상_${new Date().getTime()}.${ext}`;
+      const fileName = `현장영상_${ts}.${ext}`;
       const storageRes = await fetch(`https://developer.api.autodesk.com/data/v1/projects/${project.id}/storage`, {
         method: 'POST', headers: { ...authHeader, 'Content-Type': 'application/vnd.api+json' },
         body: JSON.stringify({ jsonapi: { version: "1.0" }, data: { type: "objects", attributes: { name: fileName }, relationships: { target: { data: { type: "folders", id: videoFolder.id } } } } })
@@ -548,8 +583,69 @@ export default function App() {
           included: [{ type: "versions", id: "1", attributes: { name: fileName, extension: { type: "versions:autodesk.bim360:File", version: "1.0" } }, relationships: { storage: { data: { type: "objects", id: objectId } } } }]
         })
       });
-      if (itemRes.ok) { alert("🎉 현장 영상이 업로드되었습니다!"); setVideoBlob(null); } else throw new Error("생성 실패");
-    } catch (error) { alert(`업로드 중 문제가 발생했습니다.\n${error.message}`); } finally { setIsUploadingVideo(false); }
+      if (!itemRes.ok) throw new Error("생성 실패");
+      const videoItemUrn = (await itemRes.json()).data.id;
+
+      // ------------------------------------------
+      // 🎥 동영상과 같이 "공사 현황 동영상 기록" PDF 생성 + 업로드
+      // ------------------------------------------
+      const days = ['일', '월', '화', '수', '목', '금', '토'];
+      const fmtTime = (d) => d ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
+      const start = videoStartTimeRef.current;
+      const end = videoEndTimeRef.current;
+      const dateStr = start ? `${start.getFullYear()}년 ${start.getMonth() + 1}월 ${start.getDate()}일 (${days[start.getDay()]})` : '';
+      const timeStr = start && end ? `${fmtTime(start)} ~ ${fmtTime(end)}` : '';
+      const author = userProfile ? ((userProfile.family_name || userProfile.given_name)
+        ? `${userProfile.family_name || ''}${userProfile.given_name || ''}`
+        : (userProfile.name || '')) : '';
+      const snapshotUrl = await requestMapSnapshot();
+      // ACC Docs 상세보기 딥링크 (커뮤니티에 통용되는 형식 기반 best-effort — 실제로 눌러서 확인 필요)
+      const videoLinkUrl = `https://acc.autodesk.com/docs/files/projects/${project.id.replace(/^b\./, '')}/folders/${encodeURIComponent(videoFolder.id)}/detail/viewer/items/${encodeURIComponent(videoItemUrn)}`;
+
+      flushSync(() => setVideoLogPdfData({ dateStr, timeStr, author, snapshotUrl }));
+      const pageEl = document.getElementById('video-log-pdf-page');
+      const pageCanvas = await html2canvas(pageEl, { scale: 2, useCORS: true });
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfW = pdf.internal.pageSize.getWidth();
+      const pdfH = pdf.internal.pageSize.getHeight();
+      pdf.addImage(pageCanvas.toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, pdfW, pdfH);
+
+      const pageRect = pageEl.getBoundingClientRect();
+      const iconRect = document.getElementById('video-link-icon').getBoundingClientRect();
+      pdf.link(
+        (iconRect.left - pageRect.left) / pageRect.width * pdfW,
+        (iconRect.top - pageRect.top) / pageRect.height * pdfH,
+        iconRect.width / pageRect.width * pdfW,
+        iconRect.height / pageRect.height * pdfH,
+        { url: videoLinkUrl }
+      );
+      setVideoLogPdfData(null);
+
+      const pdfFileName = `현장영상_${ts}.pdf`;
+      const pdfStorageRes = await fetch(`https://developer.api.autodesk.com/data/v1/projects/${project.id}/storage`, {
+        method: 'POST', headers: { ...authHeader, 'Content-Type': 'application/vnd.api+json' },
+        body: JSON.stringify({ jsonapi: { version: "1.0" }, data: { type: "objects", attributes: { name: pdfFileName }, relationships: { target: { data: { type: "folders", id: videoFolder.id } } } } })
+      });
+      const pdfObjectId = (await pdfStorageRes.json()).data.id;
+      const pdfS3UrlRes = await fetch(`https://developer.api.autodesk.com/oss/v2/buckets/${pdfObjectId.split('/')[0].split(':')[3]}/objects/${pdfObjectId.split('/')[1]}/signeds3upload`, { headers: authHeader });
+      const pdfS3UrlData = await pdfS3UrlRes.json();
+
+      await fetch(pdfS3UrlData.urls[0], { method: 'PUT', body: pdf.output('blob') });
+      await fetch(`https://developer.api.autodesk.com/oss/v2/buckets/${pdfObjectId.split('/')[0].split(':')[3]}/objects/${pdfObjectId.split('/')[1]}/signeds3upload`, {
+        method: 'POST', headers: { ...authHeader, 'Content-Type': 'application/json' }, body: JSON.stringify({ uploadKey: pdfS3UrlData.uploadKey })
+      });
+      await fetch(`https://developer.api.autodesk.com/data/v1/projects/${project.id}/items`, {
+        method: 'POST', headers: { ...authHeader, 'Content-Type': 'application/vnd.api+json' },
+        body: JSON.stringify({
+          jsonapi: { version: "1.0" },
+          data: { type: "items", attributes: { displayName: pdfFileName, extension: { type: "items:autodesk.bim360:File", version: "1.0" } }, relationships: { tip: { data: { type: "versions", id: "1" } }, parent: { data: { type: "folders", id: videoFolder.id } } } },
+          included: [{ type: "versions", id: "1", attributes: { name: pdfFileName, extension: { type: "versions:autodesk.bim360:File", version: "1.0" } }, relationships: { storage: { data: { type: "objects", id: pdfObjectId } } } }]
+        })
+      });
+
+      alert("🎉 현장 영상과 기록 PDF가 업로드되었습니다!");
+      setVideoBlob(null);
+    } catch (error) { alert(`업로드 중 문제가 발생했습니다.\n${error.message}`); } finally { setIsUploadingVideo(false); setVideoLogPdfData(null); }
   };
 
   // ------------------------------------------
@@ -844,6 +940,38 @@ export default function App() {
               </div>
             );
           })}
+        </div>
+
+        {/* 🎥 영상기록 ACC 업로드 시 같이 만드는 "공사 현황 동영상 기록" PDF (캡처 직전에만 데이터를 채움) */}
+        <div id="video-log-pdf-page" style={pdfStyles.page}>
+          <h1 style={pdfStyles.title}>공사 현황 동영상 기록</h1>
+          <table style={pdfStyles.mainTable}>
+            <colgroup><col style={{ width: '15%' }} /><col style={{ width: '35%' }} /><col style={{ width: '15%' }} /><col style={{ width: '35%' }} /></colgroup>
+            <tbody>
+              <tr>
+                <th style={pdfStyles.th}>날 짜</th><td style={pdfStyles.td}>{videoLogPdfData?.dateStr || ''}</td>
+                <th style={pdfStyles.th}>시 간</th><td style={pdfStyles.td}>{videoLogPdfData?.timeStr || ''}</td>
+              </tr>
+              <tr>
+                <th style={pdfStyles.th}>위 치</th><td style={pdfStyles.td}></td>
+                <th style={pdfStyles.th}>작성자</th><td style={pdfStyles.td}>{videoLogPdfData?.author || ''}</td>
+              </tr>
+              <tr>
+                <th style={pdfStyles.th}>내 용</th><td colSpan="3" style={pdfStyles.td}></td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={pdfStyles.routeBox}>
+            {videoLogPdfData?.snapshotUrl
+              ? <img src={videoLogPdfData.snapshotUrl} style={pdfStyles.image} alt="이동 경로" />
+              : <span style={{ color: '#999', fontSize: '14px' }}>경로 데이터 없음</span>}
+          </div>
+          <div style={pdfStyles.linkRow}>
+            <span>동영상 링크</span>
+            <span id="video-link-icon" style={{ display: 'inline-flex', width: '22px', height: '22px', backgroundColor: '#000', color: '#fff', borderRadius: '4px', alignItems: 'center', justifyContent: 'center' }}>
+              <FaVideo size={13} />
+            </span>
+          </div>
         </div>
       </div>
     </div>

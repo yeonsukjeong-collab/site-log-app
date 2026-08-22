@@ -80,5 +80,7 @@ export const pdfStyles = {
   imageTd: { border: '1px solid #000', height: '90mm', padding: '5px', backgroundColor: '#fff', textAlign: 'center', verticalAlign: 'middle' },
   image: { maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' },
   th: { border: '1px solid #000', padding: '8px 5px', backgroundColor: '#fff', textAlign: 'center', fontWeight: 'bold', height: '10mm', whiteSpace: 'nowrap' },
-  td: { border: '1px solid #000', padding: '8px 10px', backgroundColor: '#fff', height: '10mm' }
+  td: { border: '1px solid #000', padding: '8px 10px', backgroundColor: '#fff', height: '10mm' },
+  routeBox: { border: '1px solid #000', borderTop: 'none', height: '150mm', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', overflow: 'hidden' },
+  linkRow: { display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', marginTop: '10px', fontSize: '14px', color: '#000' }
 };

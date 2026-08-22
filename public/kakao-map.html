@@ -86,6 +86,7 @@
     var hasCenteredOnUser = false;
     var tapMarker = null;
     var userPath = [];
+    var userPathUtm = []; // userPath와 나란히 쌓는 UTM-K 좌표 (captureSnapshot에서 씀)
     var userTrail = null;
     var isTracking = false;
     var lastTrackedUtm = null; // 직전에 궤적에 찍은 지점(UTM-K), 중복/노이즈 좌표 걸러내는 데 씀
@@ -95,6 +96,7 @@
     function startTracking() {
       isTracking = true;
       userPath = [];
+      userPathUtm = [];
       lastTrackedUtm = null;
       if (userTrail) {
         userTrail.setMap(null);
@@ -328,20 +330,113 @@
       return merged;
     }
 
+    var lastDrawingData = null; // { polylines, hull } (UTM-K), captureSnapshot에서 다시 쓰려고 보관
+
     // 부모 창(site_log_web)에서 오는 메시지: 미리 변환해둔 등록 도면이든, 방금 ACC에서
     // 골라 브라우저에서 즉석 파싱한 DWG든 전부 이 경로로 들어온다.
     window.addEventListener('message', function (event) {
       var msg = event.data;
       if (!msg || typeof msg !== 'object') return;
       if (msg.type === 'renderDrawing') {
+        lastDrawingData = { polylines: msg.polylines, hull: msg.hull };
         clearDrawingOverlays();
         var result = renderDrawingData(msg);
         if (result.hasBoundsPoint && map) map.setBounds(result.bounds);
         notifyParent({ type: 'drawingLoaded', count: result.count });
       } else if (msg.type === 'clearDrawing') {
+        lastDrawingData = null;
         clearDrawingOverlays();
+      } else if (msg.type === 'captureSnapshot') {
+        notifyParent({ type: 'snapshot', dataUrl: captureSnapshot() });
       }
     });
+
+    // 실제 카카오 지도 배경은 CORS 때문에 캡처가 안 되므로(타일이 외부 도메인 이미지),
+    // 우리가 이미 가진 좌표(도면 hull/polylines + 촬영 중 기록한 이동 경로, 전부 UTM-K
+    // 미터 좌표)로 직접 캔버스에 그려서 PDF용 이미지를 만든다.
+    function captureSnapshot() {
+      var allPoints = [];
+      var hull = (lastDrawingData && lastDrawingData.hull) || [];
+      var polylines = (lastDrawingData && lastDrawingData.polylines) || [];
+      hull.forEach(function (p) { allPoints.push(p); });
+      polylines.forEach(function (pl) { pl.forEach(function (p) { allPoints.push(p); }); });
+      userPathUtm.forEach(function (p) { allPoints.push([p.x, p.y]); });
+
+      if (allPoints.length === 0) return null;
+
+      var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      allPoints.forEach(function (p) {
+        minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
+        minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]);
+      });
+      var spanX = Math.max(maxX - minX, 1);
+      var spanY = Math.max(maxY - minY, 1);
+
+      var W = 1000, H = 1300, PAD = 60;
+      var scale = Math.min((W - PAD * 2) / spanX, (H - PAD * 2) / spanY);
+      var offsetX = PAD + (W - PAD * 2 - spanX * scale) / 2;
+      var offsetY = PAD + (H - PAD * 2 - spanY * scale) / 2;
+
+      // UTM-K(동쪽+/북쪽+)를 캔버스 픽셀로: X는 그대로, Y는 위로 갈수록 값이 커지므로 뒤집는다.
+      function toPx(pt) {
+        return [offsetX + (pt[0] - minX) * scale, H - (offsetY + (pt[1] - minY) * scale)];
+      }
+
+      var canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      var ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#f5f6f7';
+      ctx.fillRect(0, 0, W, H);
+
+      if (hull.length >= 3) {
+        ctx.beginPath();
+        hull.forEach(function (p, i) {
+          var px = toPx(p);
+          if (i === 0) ctx.moveTo(px[0], px[1]); else ctx.lineTo(px[0], px[1]);
+        });
+        ctx.closePath();
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.strokeStyle = '#b0b6bb';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      ctx.strokeStyle = '#8a8f94';
+      ctx.lineWidth = 1.5;
+      polylines.forEach(function (pl) {
+        if (pl.length < 2) return;
+        ctx.beginPath();
+        pl.forEach(function (p, i) {
+          var px = toPx(p);
+          if (i === 0) ctx.moveTo(px[0], px[1]); else ctx.lineTo(px[0], px[1]);
+        });
+        ctx.stroke();
+      });
+
+      if (userPathUtm.length >= 2) {
+        ctx.strokeStyle = '#3478f6';
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        userPathUtm.forEach(function (p, i) {
+          var px = toPx([p.x, p.y]);
+          if (i === 0) ctx.moveTo(px[0], px[1]); else ctx.lineTo(px[0], px[1]);
+        });
+        ctx.stroke();
+      }
+      if (userPathUtm.length >= 1) {
+        var startPx = toPx([userPathUtm[0].x, userPathUtm[0].y]);
+        var endPx = toPx([userPathUtm[userPathUtm.length - 1].x, userPathUtm[userPathUtm.length - 1].y]);
+        ctx.fillStyle = '#2ECC71';
+        ctx.beginPath(); ctx.arc(startPx[0], startPx[1], 9, 0, 2 * Math.PI); ctx.fill();
+        ctx.fillStyle = '#E74C3C';
+        ctx.beginPath(); ctx.arc(endPx[0], endPx[1], 9, 0, 2 * Math.PI); ctx.fill();
+      }
+
+      return canvas.toDataURL('image/png');
+    }
 
     function initMap() {
       try {
@@ -464,14 +559,12 @@
 
       // 완전히 같은 좌표일 때만 걸러내면, Wi-Fi/네트워크 기반 위치처럼 거의 똑같은
       // 좌표가 반복될 때 궤적이 한 점에서 멈춘다. 실제 이동 거리(1m 이상)로 판단한다.
-      var movedEnoughFromLast = true;
-      if (lastTrackedUtm) {
-        var newUtm = latLngToUtmK(lat, lng);
-        movedEnoughFromLast = Math.hypot(newUtm.x - lastTrackedUtm.x, newUtm.y - lastTrackedUtm.y) >= 1;
-      }
+      var newUtm = latLngToUtmK(lat, lng);
+      var movedEnoughFromLast = !lastTrackedUtm || Math.hypot(newUtm.x - lastTrackedUtm.x, newUtm.y - lastTrackedUtm.y) >= 1;
       if (movedEnoughFromLast) {
-        lastTrackedUtm = latLngToUtmK(lat, lng);
+        lastTrackedUtm = newUtm;
         userPath.push(position);
+        userPathUtm.push(newUtm);
         if (userPath.length >= 2) {
           if (!userTrail) {
             userTrail = new kakao.maps.Polyline({
