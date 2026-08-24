@@ -14,6 +14,7 @@ import { styles, pdfStyles } from './styles';
 import { SITE_DRAWINGS } from './siteDrawings';
 import { parseDwgToDrawing } from './dwgParser';
 import { parseTiffToOverlay } from './tiffParser';
+import { parsePngToOverlay } from './pngParser';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -66,6 +67,7 @@ export default function App() {
   const [mapReady, setMapReady] = useState(false); // iframe이 {type:'ready'}를 보내면 true
   const [mapError, setMapError] = useState(''); // iframe에서 온 {type:'error'} 메시지 (지도 SDK/GPS 오류 등)
   const pendingDrawingRef = useRef(null); // mapReady 되기 전에 보내려던 도면 데이터 대기열
+  const folderFilesRef = useRef([]); // floor_plan 폴더의 전체 파일 목록 (PNG의 짝 월드파일 찾는 데 씀)
   const [selectedDrawingIndex, setSelectedDrawingIndex] = useState(0);
 
   const [showDwgModal, setShowDwgModal] = useState(false);
@@ -465,41 +467,65 @@ export default function App() {
       const fpFolder = (await fpRes.json()).data.find(item => item.attributes.name === 'floor_plan');
       const filesRes = await fetch(`https://developer.api.autodesk.com/data/v1/projects/${project.id}/folders/${fpFolder.id}/contents`, { headers: authHeader });
       const filesData = await filesRes.json();
+      folderFilesRef.current = filesData.data; // PNG 선택 시 같은 폴더에서 짝이 되는 월드파일(.pgw/.wld)을 찾는 데 씀
       setDwgList(filesData.data.filter(item => {
         if (item.type !== 'items') return false;
         const name = item.attributes.displayName.toLowerCase();
-        return name.endsWith('.dwg') || name.endsWith('.tif') || name.endsWith('.tiff');
+        return name.endsWith('.dwg') || name.endsWith('.tif') || name.endsWith('.tiff') || name.endsWith('.png');
       }));
     } catch (err) { alert("도면 폴더를 불러올 수 없습니다."); setShowDwgModal(false); }
     finally { setLoadingDwgList(false); }
   };
 
-  // 선택한 DWG/TIFF를 ACC에서 다운로드해 브라우저에서 바로 파싱하고 지도로 전송
+  // item(ACC items 리소스)의 실제 파일 바이트를 signeds3download 경유로 받아온다.
+  const downloadAccItemBytes = async (item, project, authHeader) => {
+    const versionId = item.relationships.tip.data.id;
+    const verRes = await fetch(`https://developer.api.autodesk.com/data/v1/projects/${project.id}/versions/${encodeURIComponent(versionId)}`, { headers: authHeader });
+    if (!verRes.ok) throw new Error(`파일 정보 조회 실패 (${verRes.status})`);
+    const verData = await verRes.json();
+    const storageId = verData.data.relationships.storage.data.id;
+    const parts = storageId.split(':');
+    const [bucketKey, objectKey] = parts[parts.length - 1].split('/');
+    const s3UrlRes = await fetch(`https://developer.api.autodesk.com/oss/v2/buckets/${bucketKey}/objects/${objectKey}/signeds3download`, { headers: authHeader });
+    if (!s3UrlRes.ok) throw new Error(`다운로드 링크 발급 실패 (${s3UrlRes.status})`);
+    const s3UrlData = await s3UrlRes.json();
+    const fileResponse = await fetch(s3UrlData.url);
+    if (!fileResponse.ok) throw new Error(`파일 다운로드 실패 (${fileResponse.status})`);
+    return fileResponse.arrayBuffer();
+  };
+
+  // 선택한 DWG/TIFF/PNG를 ACC에서 다운로드해 브라우저에서 바로 파싱하고 지도로 전송
   const selectDwg = async (item) => {
     setShowDwgModal(false);
     setSelectedDwgName(item.attributes.displayName);
-    const isTiff = /\.tiff?$/i.test(item.attributes.displayName);
-    setDwgParseStatus(isTiff ? '이미지 다운로드 중...' : '도면 다운로드 중...');
+    const name = item.attributes.displayName;
+    const isTiff = /\.tiff?$/i.test(name);
+    const isPng = /\.png$/i.test(name);
+    setDwgParseStatus(isTiff || isPng ? '이미지 다운로드 중...' : '도면 다운로드 중...');
     try {
       const project = projects.find(p => p.id === selectedProject);
       const authHeader = { Authorization: `Bearer ${accessToken}` };
-      const versionId = item.relationships.tip.data.id;
-      const verRes = await fetch(`https://developer.api.autodesk.com/data/v1/projects/${project.id}/versions/${encodeURIComponent(versionId)}`, { headers: authHeader });
-      if (!verRes.ok) throw new Error(`도면 정보 조회 실패 (${verRes.status})`);
-      const verData = await verRes.json();
-      const storageId = verData.data.relationships.storage.data.id;
-      const parts = storageId.split(':');
-      const [bucketKey, objectKey] = parts[parts.length - 1].split('/');
-      const s3UrlRes = await fetch(`https://developer.api.autodesk.com/oss/v2/buckets/${bucketKey}/objects/${objectKey}/signeds3download`, { headers: authHeader });
-      if (!s3UrlRes.ok) throw new Error(`다운로드 링크 발급 실패 (${s3UrlRes.status})`);
-      const s3UrlData = await s3UrlRes.json();
-      const fileResponse = await fetch(s3UrlData.url);
-      if (!fileResponse.ok) throw new Error(`파일 다운로드 실패 (${fileResponse.status})`);
-      const arrayBuffer = await fileResponse.arrayBuffer();
+      const arrayBuffer = await downloadAccItemBytes(item, project, authHeader);
 
       if (isTiff) {
         setDwgParseStatus('이미지 처리 중...');
         const { imageDataUrl, bbox } = await parseTiffToOverlay(arrayBuffer);
+        sendOverlayToMap({ type: 'renderTiffOverlay', imageDataUrl, bbox });
+      } else if (isPng) {
+        setDwgParseStatus('위치좌표(월드파일) 확인 중...');
+        const baseName = name.replace(/\.png$/i, '').toLowerCase();
+        const worldFileItem = folderFilesRef.current.find(f => {
+          if (f.type !== 'items') return false;
+          const n = f.attributes.displayName.toLowerCase();
+          return (n.endsWith('.pgw') || n.endsWith('.wld') || n.endsWith('.pngw')) && n.replace(/\.(pgw|wld|pngw)$/, '') === baseName;
+        });
+        let worldFileText = null;
+        if (worldFileItem) {
+          const worldBytes = await downloadAccItemBytes(worldFileItem, project, authHeader);
+          worldFileText = new TextDecoder('utf-8').decode(worldBytes);
+        }
+        setDwgParseStatus('이미지 처리 중...');
+        const { imageDataUrl, bbox } = await parsePngToOverlay(arrayBuffer, worldFileText);
         sendOverlayToMap({ type: 'renderTiffOverlay', imageDataUrl, bbox });
       } else {
         setDwgParseStatus('도면 파싱 중... (최초 1회는 변환 엔진 로드 때문에 다소 걸릴 수 있습니다)');
@@ -790,7 +816,7 @@ export default function App() {
                 onClick={loadDwgList}
               >
                 <span style={{ fontSize: '15px', color: selectedDwgName ? '#2C3E50' : '#000000', fontWeight: selectedDwgName ? 'bold' : 'normal' }}>
-                  {selectedDwgName || 'ACC에서 도면(DWG/TIFF) 선택...'}
+                  {selectedDwgName || 'ACC에서 도면(DWG/TIFF/PNG) 선택...'}
                 </span>
                 <FaFileAlt color="#3498DB" size={20} />
               </div>
@@ -906,12 +932,12 @@ export default function App() {
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
             <div style={styles.modalHeader}>
-              <h3 style={{ margin: 0, color: '#2c3e50' }}>현장 도면(DWG/TIFF) 목록</h3>
+              <h3 style={{ margin: 0, color: '#2c3e50' }}>현장 도면(DWG/TIFF/PNG) 목록</h3>
               <button onClick={() => setShowDwgModal(false)} style={styles.closeBtn}><FaTimes /></button>
             </div>
             <div style={styles.modalBody}>
               {loadingDwgList ? ( <div style={{ textAlign: 'center', padding: '20px', color: '#7f8c8d' }}>도면 폴더 스캔 중...</div> ) : dwgList.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '20px', color: '#e74c3c' }}>해당 폴더에 DWG/TIFF 도면 파일이 없습니다.</div>
+                <div style={{ textAlign: 'center', padding: '20px', color: '#e74c3c' }}>해당 폴더에 DWG/TIFF/PNG 도면 파일이 없습니다.</div>
               ) : (
                 <ul style={{ listStyle: 'none', padding: 0, margin: 0, marginBottom: '10px' }}>
                   {dwgList.map(item => (
