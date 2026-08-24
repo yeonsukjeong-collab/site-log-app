@@ -526,6 +526,14 @@
         kakao.maps.event.addListener(map, 'click', handleMapClick);
         kakao.maps.event.addListener(map, 'zoom_changed', positionTiffOverlay);
         kakao.maps.event.addListener(map, 'center_changed', positionTiffOverlay);
+        window.addEventListener('resize', function () { if (map) map.relayout(); });
+        // iframe 안에서는 초기화 시점에 컨테이너 크기가 아직 자리잡지 않은 채로 지도가 뜰 수
+        // 있어(타일이 안 보이거나 깨져 보임, 콘솔 에러는 없음) — 다음 틱에 relayout으로 재측정.
+        setTimeout(function () {
+          if (!map) return;
+          map.relayout();
+          map.setCenter(options.center);
+        }, 0);
         loadDwgOverlay();
         notifyParent({ type: 'ready' });
         // RN WebView 안이거나, site_log_web처럼 iframe으로 열려서 부모 창이 있는 경우는
