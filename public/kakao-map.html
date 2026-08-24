@@ -398,7 +398,12 @@
         lastDrawingData = null;
         clearDrawingOverlays();
         var tiffBounds = renderTiffOverlay(msg.imageDataUrl, msg.bbox);
-        if (map) map.setBounds(tiffBounds);
+        if (map) {
+          map.setBounds(tiffBounds);
+          // setBounds는 이미지 범위에 화면을 딱 맞춰서 여백이 없다 — 한 단계 줌아웃해서
+          // 주변 카카오 지도가 보이게 한다.
+          map.setLevel(map.getLevel() + 1);
+        }
         notifyParent({ type: 'drawingLoaded', count: 1 });
       } else if (msg.type === 'clearDrawing') {
         lastDrawingData = null;
