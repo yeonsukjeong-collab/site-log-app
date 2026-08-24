@@ -13,6 +13,7 @@ import { CLIENT_ID, REDIRECT_URI, SCOPES, KAKAO_JS_KEY, generateRandomString, ge
 import { styles, pdfStyles } from './styles';
 import { SITE_DRAWINGS } from './siteDrawings';
 import { parseDwgToDrawing } from './dwgParser';
+import { parseTiffToOverlay } from './tiffParser';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -380,7 +381,7 @@ export default function App() {
         setMapReady(true);
         setMapError('');
         if (pendingDrawingRef.current) {
-          mapIframeRef.current.contentWindow.postMessage({ type: 'renderDrawing', ...pendingDrawingRef.current }, window.location.origin);
+          mapIframeRef.current.contentWindow.postMessage(pendingDrawingRef.current, window.location.origin);
         }
       } else if (msg?.type === 'error') {
         setMapError(msg.message || '지도에서 알 수 없는 오류가 발생했습니다.');
@@ -412,10 +413,12 @@ export default function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [activeMenu]);
 
-  const sendDrawingToMap = (drawing) => {
-    pendingDrawingRef.current = drawing; // 마지막 도면으로 기억해뒀다가 iframe이 재마운트되면 다시 보냄
+  // message는 자신의 type을 포함한 완전한 postMessage 페이로드
+  // (예: {type:'renderDrawing', polylines, hull} 또는 {type:'renderTiffOverlay', imageDataUrl, bbox}).
+  const sendOverlayToMap = (message) => {
+    pendingDrawingRef.current = message; // 마지막 도면으로 기억해뒀다가 iframe이 재마운트되면 다시 보냄
     if (mapReady) {
-      mapIframeRef.current?.contentWindow?.postMessage({ type: 'renderDrawing', ...drawing }, window.location.origin);
+      mapIframeRef.current?.contentWindow?.postMessage(message, window.location.origin);
     }
   };
 
@@ -441,11 +444,11 @@ export default function App() {
     if (!selectedDrawing) return;
     fetch(selectedDrawing.file)
       .then(res => res.json())
-      .then(data => { setSelectedDwgName(''); sendDrawingToMap(data); })
+      .then(data => { setSelectedDwgName(''); sendOverlayToMap({ type: 'renderDrawing', ...data }); })
       .catch(() => alert(`등록된 도면을 불러올 수 없습니다: ${selectedDrawing.file}`));
   }, [selectedDrawing?.file]);
 
-  // ACC의 '99 TEST/Site_log/floor_plan' 폴더에서 DWG 파일 목록 조회
+  // ACC의 '99 TEST/Site_log/floor_plan' 폴더에서 도면(DWG) 또는 위치좌표 포함 TIFF 파일 목록 조회
   const loadDwgList = async () => {
     if (!selectedProject) return alert("프로젝트를 선택해주세요.");
     setShowDwgModal(true); setLoadingDwgList(true); setDwgList([]);
@@ -462,16 +465,21 @@ export default function App() {
       const fpFolder = (await fpRes.json()).data.find(item => item.attributes.name === 'floor_plan');
       const filesRes = await fetch(`https://developer.api.autodesk.com/data/v1/projects/${project.id}/folders/${fpFolder.id}/contents`, { headers: authHeader });
       const filesData = await filesRes.json();
-      setDwgList(filesData.data.filter(item => item.type === 'items' && item.attributes.displayName.toLowerCase().endsWith('.dwg')));
+      setDwgList(filesData.data.filter(item => {
+        if (item.type !== 'items') return false;
+        const name = item.attributes.displayName.toLowerCase();
+        return name.endsWith('.dwg') || name.endsWith('.tif') || name.endsWith('.tiff');
+      }));
     } catch (err) { alert("도면 폴더를 불러올 수 없습니다."); setShowDwgModal(false); }
     finally { setLoadingDwgList(false); }
   };
 
-  // 선택한 DWG를 ACC에서 다운로드해 브라우저에서 바로 파싱하고 지도로 전송
+  // 선택한 DWG/TIFF를 ACC에서 다운로드해 브라우저에서 바로 파싱하고 지도로 전송
   const selectDwg = async (item) => {
     setShowDwgModal(false);
     setSelectedDwgName(item.attributes.displayName);
-    setDwgParseStatus('도면 다운로드 중...');
+    const isTiff = /\.tiff?$/i.test(item.attributes.displayName);
+    setDwgParseStatus(isTiff ? '이미지 다운로드 중...' : '도면 다운로드 중...');
     try {
       const project = projects.find(p => p.id === selectedProject);
       const authHeader = { Authorization: `Bearer ${accessToken}` };
@@ -489,13 +497,19 @@ export default function App() {
       if (!fileResponse.ok) throw new Error(`파일 다운로드 실패 (${fileResponse.status})`);
       const arrayBuffer = await fileResponse.arrayBuffer();
 
-      setDwgParseStatus('도면 파싱 중... (최초 1회는 변환 엔진 로드 때문에 다소 걸릴 수 있습니다)');
-      const drawing = await parseDwgToDrawing(arrayBuffer);
-      sendDrawingToMap(drawing);
+      if (isTiff) {
+        setDwgParseStatus('이미지 처리 중...');
+        const { imageDataUrl, bbox } = await parseTiffToOverlay(arrayBuffer);
+        sendOverlayToMap({ type: 'renderTiffOverlay', imageDataUrl, bbox });
+      } else {
+        setDwgParseStatus('도면 파싱 중... (최초 1회는 변환 엔진 로드 때문에 다소 걸릴 수 있습니다)');
+        const drawing = await parseDwgToDrawing(arrayBuffer);
+        sendOverlayToMap({ type: 'renderDrawing', ...drawing });
+      }
       setDwgParseStatus('');
     } catch (err) {
       setDwgParseStatus('');
-      alert(`도면 파싱 실패!\n${err.message}`);
+      alert(`도면 처리 실패!\n${err.message}`);
     }
   };
 
@@ -776,7 +790,7 @@ export default function App() {
                 onClick={loadDwgList}
               >
                 <span style={{ fontSize: '15px', color: selectedDwgName ? '#2C3E50' : '#000000', fontWeight: selectedDwgName ? 'bold' : 'normal' }}>
-                  {selectedDwgName || 'ACC에서 도면(DWG) 선택...'}
+                  {selectedDwgName || 'ACC에서 도면(DWG/TIFF) 선택...'}
                 </span>
                 <FaFileAlt color="#3498DB" size={20} />
               </div>
@@ -892,12 +906,12 @@ export default function App() {
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
             <div style={styles.modalHeader}>
-              <h3 style={{ margin: 0, color: '#2c3e50' }}>현장 도면(DWG) 목록</h3>
+              <h3 style={{ margin: 0, color: '#2c3e50' }}>현장 도면(DWG/TIFF) 목록</h3>
               <button onClick={() => setShowDwgModal(false)} style={styles.closeBtn}><FaTimes /></button>
             </div>
             <div style={styles.modalBody}>
               {loadingDwgList ? ( <div style={{ textAlign: 'center', padding: '20px', color: '#7f8c8d' }}>도면 폴더 스캔 중...</div> ) : dwgList.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '20px', color: '#e74c3c' }}>해당 폴더에 DWG 도면 파일이 없습니다.</div>
+                <div style={{ textAlign: 'center', padding: '20px', color: '#e74c3c' }}>해당 폴더에 DWG/TIFF 도면 파일이 없습니다.</div>
               ) : (
                 <ul style={{ listStyle: 'none', padding: 0, margin: 0, marginBottom: '10px' }}>
                   {dwgList.map(item => (

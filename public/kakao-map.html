@@ -330,22 +330,80 @@
       return merged;
     }
 
+    // ==========================================
+    // 위치좌표(GeoTIFF) 래스터 오버레이 — 큰 DWG가 안 열릴 때의 대안 경로.
+    // 카카오맵 SDK에는 구글맵 GroundOverlay 같은 기능이 없어서, bbox의 네 모서리를
+    // containerPointFromCoords로 매 pan/zoom마다 화면 픽셀로 다시 계산해 <img>를 절대위치로 맞춘다.
+    // ==========================================
+    var tiffOverlayDiv = null;
+    var tiffOverlayImgEl = null; // captureSnapshot()에서 캔버스로 다시 그릴 때 씀 (이 시점엔 이미 로드 완료 상태)
+    var tiffOverlayBBox = null; // { minX, minY, maxX, maxY } (UTM-K)
+
+    function clearTiffOverlay() {
+      if (tiffOverlayDiv) { tiffOverlayDiv.remove(); tiffOverlayDiv = null; }
+      tiffOverlayImgEl = null;
+      tiffOverlayBBox = null;
+    }
+
+    function renderTiffOverlay(imageDataUrl, bbox) {
+      clearTiffOverlay();
+      tiffOverlayBBox = bbox;
+      tiffOverlayDiv = document.createElement('div');
+      tiffOverlayDiv.style.position = 'absolute';
+      tiffOverlayDiv.style.pointerEvents = 'none';
+      tiffOverlayDiv.style.zIndex = 1;
+      var img = document.createElement('img');
+      img.src = imageDataUrl;
+      img.style.width = '100%';
+      img.style.height = '100%';
+      img.style.opacity = '0.85';
+      tiffOverlayImgEl = img;
+      tiffOverlayDiv.appendChild(img);
+      document.getElementById('map').appendChild(tiffOverlayDiv);
+      positionTiffOverlay();
+
+      var sw = utmKToLatLng(bbox.minX, bbox.minY);
+      var ne = utmKToLatLng(bbox.maxX, bbox.maxY);
+      return new kakao.maps.LatLngBounds(new kakao.maps.LatLng(sw.lat, sw.lng), new kakao.maps.LatLng(ne.lat, ne.lng));
+    }
+
+    function positionTiffOverlay() {
+      if (!tiffOverlayDiv || !tiffOverlayBBox || !map) return;
+      var proj = map.getProjection();
+      var sw = utmKToLatLng(tiffOverlayBBox.minX, tiffOverlayBBox.minY);
+      var ne = utmKToLatLng(tiffOverlayBBox.maxX, tiffOverlayBBox.maxY);
+      var swPt = proj.containerPointFromCoords(new kakao.maps.LatLng(sw.lat, sw.lng));
+      var nePt = proj.containerPointFromCoords(new kakao.maps.LatLng(ne.lat, ne.lng));
+      tiffOverlayDiv.style.left = Math.min(swPt.x, nePt.x) + 'px';
+      tiffOverlayDiv.style.top = Math.min(swPt.y, nePt.y) + 'px';
+      tiffOverlayDiv.style.width = Math.abs(nePt.x - swPt.x) + 'px';
+      tiffOverlayDiv.style.height = Math.abs(swPt.y - nePt.y) + 'px';
+    }
+
     var lastDrawingData = null; // { polylines, hull } (UTM-K), captureSnapshot에서 다시 쓰려고 보관
 
     // 부모 창(site_log_web)에서 오는 메시지: 미리 변환해둔 등록 도면이든, 방금 ACC에서
-    // 골라 브라우저에서 즉석 파싱한 DWG든 전부 이 경로로 들어온다.
+    // 골라 브라우저에서 즉석 파싱한 DWG/TIFF든 전부 이 경로로 들어온다.
     window.addEventListener('message', function (event) {
       var msg = event.data;
       if (!msg || typeof msg !== 'object') return;
       if (msg.type === 'renderDrawing') {
         lastDrawingData = { polylines: msg.polylines, hull: msg.hull };
         clearDrawingOverlays();
+        clearTiffOverlay();
         var result = renderDrawingData(msg);
         if (result.hasBoundsPoint && map) map.setBounds(result.bounds);
         notifyParent({ type: 'drawingLoaded', count: result.count });
+      } else if (msg.type === 'renderTiffOverlay') {
+        lastDrawingData = null;
+        clearDrawingOverlays();
+        var tiffBounds = renderTiffOverlay(msg.imageDataUrl, msg.bbox);
+        if (map) map.setBounds(tiffBounds);
+        notifyParent({ type: 'drawingLoaded', count: 1 });
       } else if (msg.type === 'clearDrawing') {
         lastDrawingData = null;
         clearDrawingOverlays();
+        clearTiffOverlay();
       } else if (msg.type === 'captureSnapshot') {
         notifyParent({ type: 'snapshot', dataUrl: captureSnapshot() });
       }
@@ -361,6 +419,10 @@
       hull.forEach(function (p) { allPoints.push(p); });
       polylines.forEach(function (pl) { pl.forEach(function (p) { allPoints.push(p); }); });
       userPathUtm.forEach(function (p) { allPoints.push([p.x, p.y]); });
+      if (tiffOverlayBBox) {
+        allPoints.push([tiffOverlayBBox.minX, tiffOverlayBBox.minY]);
+        allPoints.push([tiffOverlayBBox.maxX, tiffOverlayBBox.maxY]);
+      }
 
       if (allPoints.length === 0) return null;
 
@@ -387,6 +449,16 @@
       var ctx = canvas.getContext('2d');
       ctx.fillStyle = '#f5f6f7';
       ctx.fillRect(0, 0, W, H);
+
+      if (tiffOverlayBBox && tiffOverlayImgEl) {
+        var tl = toPx([tiffOverlayBBox.minX, tiffOverlayBBox.maxY]);
+        var br = toPx([tiffOverlayBBox.maxX, tiffOverlayBBox.minY]);
+        try {
+          ctx.drawImage(tiffOverlayImgEl, tl[0], tl[1], br[0] - tl[0], br[1] - tl[1]);
+        } catch (e) {
+          reportDebug('captureSnapshot: TIFF 이미지 그리기 실패: ' + (e && e.message ? e.message : e));
+        }
+      }
 
       if (hull.length >= 3) {
         ctx.beginPath();
@@ -447,6 +519,8 @@
         };
         map = new kakao.maps.Map(container, options);
         kakao.maps.event.addListener(map, 'click', handleMapClick);
+        kakao.maps.event.addListener(map, 'zoom_changed', positionTiffOverlay);
+        kakao.maps.event.addListener(map, 'center_changed', positionTiffOverlay);
         loadDwgOverlay();
         notifyParent({ type: 'ready' });
         // RN WebView 안이거나, site_log_web처럼 iframe으로 열려서 부모 창이 있는 경우는
