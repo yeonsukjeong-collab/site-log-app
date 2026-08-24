@@ -43,6 +43,12 @@ export async function parseTiffToOverlay(arrayBuffer) {
   const out = imageData.data;
   const total = width * height;
 
+  // 배경이 흰색인 스캔/마스크 도면이 많다 (실제로 그려진 부분만 있고 나머지는 흰 여백).
+  // 알파 밴드가 없으면 이 흰 배경을 투명으로 처리해서, 지도 위에 얹었을 때 도면이 그려진
+  // 부분만 보이고 나머지는 지도가 그대로 비치게 한다. (알파 밴드가 있으면 그 값을 그대로 씀)
+  const WHITE_THRESHOLD = 250;
+  const hasAlphaBand = samplesPerPixel >= 4 || samplesPerPixel === 2;
+
   for (let i = 0; i < total; i++) {
     let r, g, b, a = 255;
     if (samplesPerPixel === 1) {
@@ -53,6 +59,9 @@ export async function parseTiffToOverlay(arrayBuffer) {
       r = raster[i * samplesPerPixel]; g = raster[i * samplesPerPixel + 1]; b = raster[i * samplesPerPixel + 2]; a = raster[i * samplesPerPixel + 3];
     } else {
       r = raster[i * 3]; g = raster[i * 3 + 1]; b = raster[i * 3 + 2];
+    }
+    if (!hasAlphaBand && r >= WHITE_THRESHOLD && g >= WHITE_THRESHOLD && b >= WHITE_THRESHOLD) {
+      a = 0;
     }
     out[i * 4] = r; out[i * 4 + 1] = g; out[i * 4 + 2] = b; out[i * 4 + 3] = a;
   }
