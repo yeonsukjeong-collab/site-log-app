@@ -577,15 +577,25 @@
       var utmk = latLngToUtmK(lat, lng);
 
       if (!tapMarker) {
+        // 정확한 지점을 짚어주는 십자(+) 모양. 흰 테두리를 먼저 굵게 깔고 그 위에 빨간
+        // 십자를 그려서 어떤 배경에서도 잘 보이게 하고, 십자의 정중앙이 탭한 좌표가
+        // 되도록 offset을 이미지 정중앙(12,12)으로 맞춘다.
         var tapMarkerSvg =
           '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">' +
-          '<circle cx="12" cy="12" r="8" fill="#e53935" stroke="white" stroke-width="2"/></svg>';
+          '<g stroke="white" stroke-width="5" stroke-linecap="round">' +
+          '<line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/>' +
+          '</g>' +
+          '<g stroke="#e53935" stroke-width="2.5" stroke-linecap="round">' +
+          '<line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/>' +
+          '</g>' +
+          '</svg>';
         tapMarker = new kakao.maps.Marker({
           position: latlng,
           map: map,
           image: new kakao.maps.MarkerImage(
             'data:image/svg+xml;base64,' + btoa(tapMarkerSvg),
-            new kakao.maps.Size(24, 24)
+            new kakao.maps.Size(24, 24),
+            { offset: new kakao.maps.Point(12, 12) }
           ),
         });
       } else {
