@@ -363,8 +363,13 @@
       document.getElementById('map').appendChild(tiffOverlayDiv);
       positionTiffOverlay();
 
-      var sw = utmKToLatLng(bbox.minX, bbox.minY);
-      var ne = utmKToLatLng(bbox.maxX, bbox.maxY);
+      // 이미지 bbox에 화면을 딱 맞추면 여백이 없어서 주변 지도가 안 보인다. setBounds에
+      // 넘길 범위만 30% 더 넓혀서 자연스럽게 여백이 생기게 한다 (setLevel을 별도로 또
+      // 호출하면 타일이 깨지는 문제가 있어 이 방식으로 대신함).
+      var padX = (bbox.maxX - bbox.minX) * 0.3;
+      var padY = (bbox.maxY - bbox.minY) * 0.3;
+      var sw = utmKToLatLng(bbox.minX - padX, bbox.minY - padY);
+      var ne = utmKToLatLng(bbox.maxX + padX, bbox.maxY + padY);
       return new kakao.maps.LatLngBounds(new kakao.maps.LatLng(sw.lat, sw.lng), new kakao.maps.LatLng(ne.lat, ne.lng));
     }
 
@@ -400,12 +405,7 @@
         lastDrawingData = null;
         clearDrawingOverlays();
         var tiffBounds = renderTiffOverlay(msg.imageDataUrl, msg.bbox);
-        if (map) {
-          map.setBounds(tiffBounds);
-          // setBounds는 이미지 범위에 화면을 딱 맞춰서 여백이 없다 — 한 단계 줌아웃해서
-          // 주변 카카오 지도가 보이게 한다.
-          map.setLevel(map.getLevel() + 1);
-        }
+        if (map) map.setBounds(tiffBounds);
         notifyParent({ type: 'drawingLoaded', count: 1 });
       } else if (msg.type === 'clearDrawing') {
         lastDrawingData = null;
