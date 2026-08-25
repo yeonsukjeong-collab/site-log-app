@@ -19,6 +19,7 @@
       font-size: 13px;
       color: #111;
       box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+      cursor: pointer;
     }
     #coordPanel .title {
       font-weight: 600;
@@ -36,6 +37,11 @@
   <div id="coordPanel"></div>
   <script>
     var DEFAULT_CENTER = { lat: 37.5665, lng: 126.978 }; // 서울시청 (첫 GPS fix 전 기본값)
+
+    // 좌표 박스를 탭하면 숨긴다. 지도의 다른 곳을 다시 탭하면 handleMapClick이 다시 채우고 보여준다.
+    document.getElementById('coordPanel').addEventListener('click', function () {
+      this.style.display = 'none';
+    });
 
     // React Native WebView 안이면 그쪽 브리지로, 일반 브라우저에서 iframe으로 열렸으면
     // 부모 창(window.parent)으로 보낸다. (site_log_web은 후자 경로를 쓴다.)
@@ -603,7 +609,7 @@
         var panel = document.getElementById('coordPanel');
         panel.style.display = 'block';
         panel.innerHTML =
-          '<div class="title">탭한 위치 좌표</div>' +
+          '<div class="title">탭한 위치 좌표 (탭하면 닫힘)</div>' +
           '<div class="row"><span>위도</span><span>' + lat.toFixed(6) + '</span></div>' +
           '<div class="row"><span>경도</span><span>' + lng.toFixed(6) + '</span></div>' +
           '<div class="row"><span>UTM-K X</span><span>' + utmk.x.toFixed(2) + ' m</span></div>' +
