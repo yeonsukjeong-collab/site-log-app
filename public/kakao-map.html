@@ -340,48 +340,57 @@
     // 카카오맵 SDK에는 구글맵 GroundOverlay 같은 기능이 없어서, bbox의 네 모서리를
     // containerPointFromCoords로 매 pan/zoom마다 화면 픽셀로 다시 계산해 <img>를 절대위치로 맞춘다.
     // ==========================================
-    var tiffBoundaryPolygon = null; // DOM 오버레이 대신 DWG hull과 똑같은 카카오 네이티브 Polygon으로 그림
-    var tiffOverlayImgEl = null; // captureSnapshot()에서 캔버스로 다시 그릴 때 씀
+    var tiffOverlayDiv = null;
+    var tiffOverlayImgEl = null; // captureSnapshot()에서 캔버스로 다시 그릴 때 씀 (이 시점엔 이미 로드 완료 상태)
     var tiffOverlayBBox = null; // { minX, minY, maxX, maxY } (UTM-K)
 
     function clearTiffOverlay() {
-      if (tiffBoundaryPolygon) { tiffBoundaryPolygon.setMap(null); tiffBoundaryPolygon = null; }
+      if (tiffOverlayDiv) { tiffOverlayDiv.remove(); tiffOverlayDiv = null; }
       tiffOverlayImgEl = null;
       tiffOverlayBBox = null;
     }
 
-    // 디버그: 커스텀 DOM(<img> 절대위치) 오버레이를 얹으면 주변 카카오 타일이 통째로 사라지는
-    // 문제가 있어서, DWG의 hull과 똑같이 카카오 네이티브 Polygon으로 사각 경계만 그려본다.
-    // (이미지 자체를 지도 위에 얹는 방법은 이 문제의 원인을 확인한 뒤 다시 고민한다.)
     function renderTiffOverlay(imageDataUrl, bbox) {
       clearTiffOverlay();
       tiffOverlayBBox = bbox;
+      tiffOverlayDiv = document.createElement('div');
+      tiffOverlayDiv.style.position = 'absolute';
+      tiffOverlayDiv.style.pointerEvents = 'none';
+      tiffOverlayDiv.style.zIndex = 1;
+      tiffOverlayDiv.style.border = '4px solid red'; // 디버그용 — 오버레이 박스의 실제 크기/위치를 눈으로 확인
+      var img = document.createElement('img');
+      // 디버그: 이미지(큰 data URL) 자체가 원인인지 가리기 위해 잠시 src를 안 채운다.
+      // img.src = imageDataUrl;
+      img.style.width = '100%';
+      img.style.height = '100%';
+      img.style.opacity = '0.85';
+      tiffOverlayImgEl = img;
+      tiffOverlayDiv.appendChild(img);
+      document.getElementById('overlayLayer').appendChild(tiffOverlayDiv);
+      positionTiffOverlay();
 
-      var corners = [
-        [bbox.minX, bbox.minY],
-        [bbox.maxX, bbox.minY],
-        [bbox.maxX, bbox.maxY],
-        [bbox.minX, bbox.maxY],
-      ].map(function (p) {
-        var ll = utmKToLatLng(p[0], p[1]);
-        return new kakao.maps.LatLng(ll.lat, ll.lng);
-      });
-      tiffBoundaryPolygon = new kakao.maps.Polygon({
-        map: map,
-        path: corners,
-        fillColor: '#e53935',
-        fillOpacity: 0.15,
-        strokeWeight: 3,
-        strokeColor: '#e53935',
-        strokeOpacity: 1,
-        zIndex: 1,
-      });
-
+      // 이미지 bbox에 화면을 딱 맞추면 여백이 없어서 주변 지도가 안 보인다. setBounds에
+      // 넘길 범위만 30% 더 넓혀서 자연스럽게 여백이 생기게 한다 (setLevel을 별도로 또
+      // 호출하면 타일이 깨지는 문제가 있어 이 방식으로 대신함).
       var padX = (bbox.maxX - bbox.minX) * 0.3;
       var padY = (bbox.maxY - bbox.minY) * 0.3;
       var sw = utmKToLatLng(bbox.minX - padX, bbox.minY - padY);
       var ne = utmKToLatLng(bbox.maxX + padX, bbox.maxY + padY);
       return new kakao.maps.LatLngBounds(new kakao.maps.LatLng(sw.lat, sw.lng), new kakao.maps.LatLng(ne.lat, ne.lng));
+    }
+
+    function positionTiffOverlay() {
+      if (!tiffOverlayDiv || !tiffOverlayBBox || !map) return;
+      var proj = map.getProjection();
+      var sw = utmKToLatLng(tiffOverlayBBox.minX, tiffOverlayBBox.minY);
+      var ne = utmKToLatLng(tiffOverlayBBox.maxX, tiffOverlayBBox.maxY);
+      var swPt = proj.containerPointFromCoords(new kakao.maps.LatLng(sw.lat, sw.lng));
+      var nePt = proj.containerPointFromCoords(new kakao.maps.LatLng(ne.lat, ne.lng));
+      tiffOverlayDiv.style.left = Math.min(swPt.x, nePt.x) + 'px';
+      tiffOverlayDiv.style.top = Math.min(swPt.y, nePt.y) + 'px';
+      tiffOverlayDiv.style.width = Math.abs(nePt.x - swPt.x) + 'px';
+      tiffOverlayDiv.style.height = Math.abs(swPt.y - nePt.y) + 'px';
+      reportDebug('tiffOverlay left=' + tiffOverlayDiv.style.left + ' top=' + tiffOverlayDiv.style.top + ' width=' + tiffOverlayDiv.style.width + ' height=' + tiffOverlayDiv.style.height + ' mapSize=' + document.getElementById('map').clientWidth + 'x' + document.getElementById('map').clientHeight);
     }
 
     var lastDrawingData = null; // { polylines, hull } (UTM-K), captureSnapshot에서 다시 쓰려고 보관
@@ -523,6 +532,8 @@
         };
         map = new kakao.maps.Map(container, options);
         kakao.maps.event.addListener(map, 'click', handleMapClick);
+        kakao.maps.event.addListener(map, 'zoom_changed', positionTiffOverlay);
+        kakao.maps.event.addListener(map, 'center_changed', positionTiffOverlay);
         window.addEventListener('resize', function () { if (map) map.relayout(); });
         // iframe 안에서는 초기화 시점에 컨테이너 크기가 아직 자리잡지 않은 채로 지도가 뜰 수
         // 있어(타일이 안 보이거나 깨져 보임, 콘솔 에러는 없음) — 다음 틱에 relayout으로 재측정.
