@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <style>
     html, body, #map { width: 100%; height: 100%; margin: 0; padding: 0; }
+    #overlayLayer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
     #coordPanel {
       display: none;
       position: fixed;
@@ -31,6 +32,7 @@
 </head>
 <body>
   <div id="map"></div>
+  <div id="overlayLayer"></div>
   <div id="coordPanel"></div>
   <script>
     var DEFAULT_CENTER = { lat: 37.5665, lng: 126.978 }; // 서울시청 (첫 GPS fix 전 기본값)
@@ -363,7 +365,7 @@
       img.style.opacity = '0.85';
       tiffOverlayImgEl = img;
       tiffOverlayDiv.appendChild(img);
-      document.getElementById('map').appendChild(tiffOverlayDiv);
+      document.getElementById('overlayLayer').appendChild(tiffOverlayDiv);
       positionTiffOverlay();
 
       // 이미지 bbox에 화면을 딱 맞추면 여백이 없어서 주변 지도가 안 보인다. setBounds에
