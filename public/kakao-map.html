@@ -352,6 +352,7 @@
       tiffOverlayDiv.style.position = 'absolute';
       tiffOverlayDiv.style.pointerEvents = 'none';
       tiffOverlayDiv.style.zIndex = 1;
+      tiffOverlayDiv.style.border = '4px solid red'; // 디버그용 — 오버레이 박스의 실제 크기/위치를 눈으로 확인
       var img = document.createElement('img');
       img.src = imageDataUrl;
       img.style.width = '100%';
@@ -378,6 +379,7 @@
       tiffOverlayDiv.style.top = Math.min(swPt.y, nePt.y) + 'px';
       tiffOverlayDiv.style.width = Math.abs(nePt.x - swPt.x) + 'px';
       tiffOverlayDiv.style.height = Math.abs(swPt.y - nePt.y) + 'px';
+      reportDebug('tiffOverlay left=' + tiffOverlayDiv.style.left + ' top=' + tiffOverlayDiv.style.top + ' width=' + tiffOverlayDiv.style.width + ' height=' + tiffOverlayDiv.style.height + ' mapSize=' + document.getElementById('map').clientWidth + 'x' + document.getElementById('map').clientHeight);
     }
 
     var lastDrawingData = null; // { polylines, hull } (UTM-K), captureSnapshot에서 다시 쓰려고 보관
