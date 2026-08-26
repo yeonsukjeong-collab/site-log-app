@@ -13,7 +13,6 @@ import { CLIENT_ID, REDIRECT_URI, SCOPES, KAKAO_JS_KEY, generateRandomString, ge
 import { styles, pdfStyles } from './styles';
 import { SITE_DRAWINGS } from './siteDrawings';
 import { parseDwgToDrawing } from './dwgParser';
-import { parseDxfToDrawing } from './dxfParser';
 import { parseTiffToOverlay } from './tiffParser';
 
 export default function App() {
@@ -469,18 +468,17 @@ export default function App() {
       setDwgList(filesData.data.filter(item => {
         if (item.type !== 'items') return false;
         const name = item.attributes.displayName.toLowerCase();
-        return name.endsWith('.dwg') || name.endsWith('.dxf') || name.endsWith('.tif') || name.endsWith('.tiff');
+        return name.endsWith('.dwg') || name.endsWith('.tif') || name.endsWith('.tiff');
       }));
     } catch (err) { alert("도면 폴더를 불러올 수 없습니다."); setShowDwgModal(false); }
     finally { setLoadingDwgList(false); }
   };
 
-  // 선택한 DWG/DXF/TIFF를 ACC에서 다운로드해 브라우저에서 바로 파싱하고 지도로 전송
+  // 선택한 DWG/TIFF를 ACC에서 다운로드해 브라우저에서 바로 파싱하고 지도로 전송
   const selectDwg = async (item) => {
     setShowDwgModal(false);
     setSelectedDwgName(item.attributes.displayName);
     const isTiff = /\.tiff?$/i.test(item.attributes.displayName);
-    const isDxf = /\.dxf$/i.test(item.attributes.displayName);
     setDwgParseStatus(isTiff ? '이미지 다운로드 중...' : '도면 다운로드 중...');
     try {
       const project = projects.find(p => p.id === selectedProject);
@@ -503,10 +501,6 @@ export default function App() {
         setDwgParseStatus('이미지 처리 중...');
         const { imageDataUrl, bbox } = await parseTiffToOverlay(arrayBuffer);
         sendOverlayToMap({ type: 'renderTiffOverlay', imageDataUrl, bbox });
-      } else if (isDxf) {
-        setDwgParseStatus('DXF 파싱 중...');
-        const drawing = await parseDxfToDrawing(arrayBuffer);
-        sendOverlayToMap({ type: 'renderDrawing', ...drawing });
       } else {
         setDwgParseStatus('도면 파싱 중... (최초 1회는 변환 엔진 로드 때문에 다소 걸릴 수 있습니다)');
         const drawing = await parseDwgToDrawing(arrayBuffer);
@@ -796,7 +790,7 @@ export default function App() {
                 onClick={loadDwgList}
               >
                 <span style={{ fontSize: '15px', color: selectedDwgName ? '#2C3E50' : '#000000', fontWeight: selectedDwgName ? 'bold' : 'normal' }}>
-                  {selectedDwgName || 'ACC에서 도면(DWG/DXF/TIFF) 선택...'}
+                  {selectedDwgName || 'ACC에서 도면(DWG/TIFF) 선택...'}
                 </span>
                 <FaFileAlt color="#3498DB" size={20} />
               </div>
@@ -912,12 +906,12 @@ export default function App() {
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
             <div style={styles.modalHeader}>
-              <h3 style={{ margin: 0, color: '#2c3e50' }}>현장 도면(DWG/DXF/TIFF) 목록</h3>
+              <h3 style={{ margin: 0, color: '#2c3e50' }}>현장 도면(DWG/TIFF) 목록</h3>
               <button onClick={() => setShowDwgModal(false)} style={styles.closeBtn}><FaTimes /></button>
             </div>
             <div style={styles.modalBody}>
               {loadingDwgList ? ( <div style={{ textAlign: 'center', padding: '20px', color: '#7f8c8d' }}>도면 폴더 스캔 중...</div> ) : dwgList.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '20px', color: '#e74c3c' }}>해당 폴더에 DWG/DXF/TIFF 도면 파일이 없습니다.</div>
+                <div style={{ textAlign: 'center', padding: '20px', color: '#e74c3c' }}>해당 폴더에 DWG/TIFF 도면 파일이 없습니다.</div>
               ) : (
                 <ul style={{ listStyle: 'none', padding: 0, margin: 0, marginBottom: '10px' }}>
                   {dwgList.map(item => (
