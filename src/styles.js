@@ -23,9 +23,9 @@ export const styles = {
   cardTitle: { fontSize: '14px', fontWeight: 'bold', color: '#7f8c8d' },
   btnDelete: { background: 'none', border: 'none', color: '#e74c3c', cursor: 'pointer', fontSize: '16px' },
 
-  input: { width: '100%', padding: '12px', marginBottom: '10px', border: '1px solid #D5D8DC', borderRadius: '5px', boxSizing: 'border-box', outline: 'none', backgroundColor: '#ffffff', color: '#000000', WebkitAppearance: 'none', colorScheme: 'light' },
+  input: { width: '100%', padding: '12px', marginBottom: '10px', border: '1px solid #D5D8DC', borderRadius: '5px', boxSizing: 'border-box', outline: 'none', backgroundColor: '#ffffff', color: '#000000', WebkitAppearance: 'none', colorScheme: 'light', fontSize: '15px', fontFamily: 'inherit' },
   inputWithIcon: { display: 'flex', alignItems: 'center', border: '1px solid #D5D8DC', borderRadius: '5px', padding: '0 10px', marginBottom: '10px', backgroundColor: '#ffffff' },
-  flexInput: { flex: 1, padding: '12px 0', border: 'none', outline: 'none', backgroundColor: 'transparent', color: '#000000', WebkitAppearance: 'none', colorScheme: 'light' },
+  flexInput: { flex: 1, padding: '12px 0', border: 'none', outline: 'none', backgroundColor: 'transparent', color: '#000000', WebkitAppearance: 'none', colorScheme: 'light', fontSize: '15px', fontFamily: 'inherit' },
   
   buttonRow: { display: 'flex', gap: '10px', marginBottom: '10px' },
   btnCamera: { flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '12px 0', border: 'none', borderRadius: '5px', color: 'white', backgroundColor: '#F5B041', fontWeight: 'bold', cursor: 'pointer' },

@@ -73,6 +73,8 @@ export default function App() {
   const [loadingDwgList, setLoadingDwgList] = useState(false);
   const [dwgParseStatus, setDwgParseStatus] = useState('');
   const [selectedDwgName, setSelectedDwgName] = useState('');
+  const [videoLocationStr, setVideoLocationStr] = useState(''); // 동영상 기록 PDF의 "위치"란
+  const [videoContentStr, setVideoContentStr] = useState(''); // 동영상 기록 PDF의 "내용"란
 
   const isRecordingRef = useRef(false);
 
@@ -795,6 +797,10 @@ export default function App() {
                 <FaFileAlt color="#3498DB" size={20} />
               </div>
 
+              {/* 1-0. 위치 / 활용내용 입력 */}
+              <input style={styles.input} type="text" placeholder="위치를 입력하세요" value={videoLocationStr} onChange={e => setVideoLocationStr(e.target.value)} />
+              <input style={styles.input} type="text" placeholder="활용내용을 입력하세요" value={videoContentStr} onChange={e => setVideoContentStr(e.target.value)} />
+
               {/* 1-1. 이 프로젝트에 미리 등록된 도면이 여러 개면 선택 */}
               {projectDrawings.length > 1 && (
                 <div style={{ ...styles.inputWithIcon, padding: '12px', gap: '8px', marginBottom: '10px' }}>
@@ -967,11 +973,11 @@ export default function App() {
                 <th style={pdfStyles.th}>시 간</th><td style={pdfStyles.td}>{videoLogPdfData?.timeStr || ''}</td>
               </tr>
               <tr>
-                <th style={pdfStyles.th}>위 치</th><td style={pdfStyles.td}></td>
+                <th style={pdfStyles.th}>위 치</th><td style={pdfStyles.td}>{videoLocationStr}</td>
                 <th style={pdfStyles.th}>작성자</th><td style={pdfStyles.td}>{videoLogPdfData?.author || ''}</td>
               </tr>
               <tr>
-                <th style={pdfStyles.th}>내 용</th><td colSpan="3" style={pdfStyles.td}></td>
+                <th style={pdfStyles.th}>내 용</th><td colSpan="3" style={pdfStyles.td}>{videoContentStr}</td>
               </tr>
             </tbody>
           </table>
