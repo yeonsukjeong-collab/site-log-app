@@ -28,18 +28,55 @@
       justify-content: space-between;
       font-family: monospace;
     }
+    #btnMyLocation {
+      position: fixed;
+      right: 12px;
+      bottom: 12px;
+      z-index: 1000;
+      width: 40px;
+      height: 40px;
+      border: none;
+      border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 0;
+    }
+    #btnMyLocation:active {
+      background: #eef1f5;
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <div id="overlayLayer"></div>
   <div id="coordPanel"></div>
+  <button id="btnMyLocation" title="내 위치로 이동">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="12" cy="12" r="3" fill="#3478f6"/>
+      <path d="M12 2V5M12 19V22M2 12H5M19 12H22" stroke="#3478f6" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="12" cy="12" r="7" stroke="#3478f6" stroke-width="1.5"/>
+    </svg>
+  </button>
   <script>
     var DEFAULT_CENTER = { lat: 37.5665, lng: 126.978 }; // 서울시청 (첫 GPS fix 전 기본값)
 
     // 좌표 박스를 탭하면 숨긴다. 지도의 다른 곳을 다시 탭하면 handleMapClick이 다시 채우고 보여준다.
     document.getElementById('coordPanel').addEventListener('click', function () {
       this.style.display = 'none';
+    });
+
+    // 현재 위치(파란 점)로 지도 중심을 다시 옮긴다. GPS 위치는 부모 창이 setUserLocation()으로
+    // 계속 넣어주므로, 아직 한 번도 못 받았으면 userMarker가 없다.
+    document.getElementById('btnMyLocation').addEventListener('click', function () {
+      if (!map || !userMarker) {
+        reportError('아직 현재 위치를 확인하지 못했습니다.');
+        return;
+      }
+      map.setCenter(userMarker.getPosition());
     });
 
     // React Native WebView 안이면 그쪽 브리지로, 일반 브라우저에서 iframe으로 열렸으면
