@@ -1,11 +1,11 @@
 export const styles = {
   appWrapper: { display: 'flex', justifyContent: 'center', backgroundColor: '#f0f2f5', minHeight: '100vh', fontFamily: 'sans-serif' },
-  container: { width: '100%', maxWidth: '400px', backgroundColor: '#fff', padding: '20px', boxSizing: 'border-box', boxShadow: '0 0 10px rgba(0,0,0,0.1)' },
+  container: { width: '100%', maxWidth: '400px', backgroundColor: '#fff', padding: '20px', paddingTop: '18px', boxSizing: 'border-box', boxShadow: '0 0 10px rgba(0,0,0,0.1)' },
   loginContainer: { width: '100%', maxWidth: '400px', backgroundColor: '#fff', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '40px', boxSizing: 'border-box', boxShadow: '0 0 10px rgba(0,0,0,0.1)' },
   accLoginButton: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', padding: '15px', backgroundColor: '#0696D7', color: 'white', border: 'none', borderRadius: '5px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' },
   
   // 💡 메인 타이틀 투톤 디자인
-  headerTitle: { fontSize: '28px', fontWeight: '900', textAlign: 'center', margin: '20px 0 25px 0', letterSpacing: '-0.5px' },
+  headerTitle: { fontSize: '28px', fontWeight: '900', textAlign: 'center', margin: '18px 0 25px 0', letterSpacing: '-0.5px' },
   titleSite: { color: '#2C3E50' },
   titleLog: { color: '#E67E22' },
 
@@ -23,7 +23,7 @@ export const styles = {
   cardTitle: { fontSize: '14px', fontWeight: 'bold', color: '#7f8c8d' },
   btnDelete: { background: 'none', border: 'none', color: '#e74c3c', cursor: 'pointer', fontSize: '16px' },
 
-  input: { width: '100%', height: '48px', padding: '12px', marginBottom: '10px', border: '1px solid #D5D8DC', borderRadius: '5px', boxSizing: 'border-box', outline: 'none', backgroundColor: '#ffffff', color: '#000000', WebkitAppearance: 'none', colorScheme: 'light', fontSize: '15px', fontFamily: 'inherit' },
+  input: { width: '100%', height: '43px', padding: '12px', marginBottom: '10px', border: '1px solid #D5D8DC', borderRadius: '5px', boxSizing: 'border-box', outline: 'none', backgroundColor: '#ffffff', color: '#000000', WebkitAppearance: 'none', colorScheme: 'light', fontSize: '15px', fontFamily: 'inherit' },
   inputWithIcon: { display: 'flex', alignItems: 'center', border: '1px solid #D5D8DC', borderRadius: '5px', padding: '0 10px', marginBottom: '10px', backgroundColor: '#ffffff' },
   flexInput: { flex: 1, padding: '12px 0', border: 'none', outline: 'none', backgroundColor: 'transparent', color: '#000000', WebkitAppearance: 'none', colorScheme: 'light', fontSize: '15px', fontFamily: 'inherit' },
   

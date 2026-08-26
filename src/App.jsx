@@ -788,7 +788,7 @@ export default function App() {
             <div>
               {/* 1. ACC floor_plan 폴더의 DWG를 즉석에서 선택 */}
               <div
-                style={{ ...styles.inputWithIcon, height: '48px', boxSizing: 'border-box', cursor: 'pointer', padding: '12px', justifyContent: 'space-between', marginBottom: '10px' }}
+                style={{ ...styles.inputWithIcon, height: '43px', boxSizing: 'border-box', cursor: 'pointer', padding: '12px', justifyContent: 'space-between', marginBottom: '10px' }}
                 onClick={loadDwgList}
               >
                 <span style={{ fontSize: '15px', color: selectedDwgName ? '#2C3E50' : '#000000', fontWeight: selectedDwgName ? 'bold' : 'normal' }}>
