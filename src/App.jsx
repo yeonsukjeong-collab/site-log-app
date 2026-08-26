@@ -788,7 +788,7 @@ export default function App() {
             <div>
               {/* 1. ACC floor_plan 폴더의 DWG를 즉석에서 선택 */}
               <div
-                style={{ ...styles.inputWithIcon, cursor: 'pointer', padding: '12px', justifyContent: 'space-between', marginBottom: '10px' }}
+                style={{ ...styles.inputWithIcon, height: '48px', boxSizing: 'border-box', cursor: 'pointer', padding: '12px', justifyContent: 'space-between', marginBottom: '10px' }}
                 onClick={loadDwgList}
               >
                 <span style={{ fontSize: '15px', color: selectedDwgName ? '#2C3E50' : '#000000', fontWeight: selectedDwgName ? 'bold' : 'normal' }}>
@@ -817,8 +817,8 @@ export default function App() {
                 </div>
               )}
 
-              {/* 2. 도면 오버레이 지도 (기존 높이의 2/3) */}
-              <div style={{ position: 'relative', width: '100%', height: '233px', backgroundColor: '#ecf0f1', borderRadius: '5px', overflow: 'hidden', marginBottom: '15px', border: '1px solid #D5D8DC' }}>
+              {/* 2. 도면 오버레이 지도 (기존 높이의 0.9배) */}
+              <div style={{ position: 'relative', width: '100%', height: '210px', backgroundColor: '#ecf0f1', borderRadius: '5px', overflow: 'hidden', marginBottom: '15px', border: '1px solid #D5D8DC' }}>
 
                 <iframe
                   ref={mapIframeRef}
