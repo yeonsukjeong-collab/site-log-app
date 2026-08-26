@@ -424,13 +424,14 @@ export default function App() {
     }
   };
 
-  // 도면 윤곽 + 촬영 중 이동 경로를 그린 이미지(PNG data URL)를 지도(iframe)에 요청.
-  // 실제 카카오 지도 타일은 CORS 때문에 캡처가 안 돼서, iframe이 갖고 있는 좌표로
-  // 직접 캔버스에 그려서 돌려준다 (kakao-map.html의 captureSnapshot 참고).
+  // 도면 윤곽 + 촬영 중 이동 경로 + 주변 지도(OSM 타일)를 그린 이미지(PNG data URL)를
+  // 지도(iframe)에 요청. 카카오 타일은 CORS 때문에 캡처가 안 돼서, iframe이 대신 OSM
+  // 타일을 받아 배경으로 깔고 그 위에 좌표를 그려서 돌려준다 (kakao-map.html의
+  // captureSnapshot 참고). 타일을 여러 장 네트워크로 받아오므로 넉넉하게 기다린다.
   const requestMapSnapshot = () => new Promise((resolve) => {
     const win = mapIframeRef.current?.contentWindow;
     if (!win) return resolve(null);
-    const timeoutId = setTimeout(() => { window.removeEventListener('message', handler); resolve(null); }, 3000);
+    const timeoutId = setTimeout(() => { window.removeEventListener('message', handler); resolve(null); }, 10000);
     function handler(event) {
       if (event.source !== win || event.data?.type !== 'snapshot') return;
       clearTimeout(timeoutId);

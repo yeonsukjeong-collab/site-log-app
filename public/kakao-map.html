@@ -455,14 +455,42 @@
         clearDrawingOverlays();
         clearTiffOverlay();
       } else if (msg.type === 'captureSnapshot') {
-        notifyParent({ type: 'snapshot', dataUrl: captureSnapshot() });
+        captureSnapshot().then(function (dataUrl) {
+          notifyParent({ type: 'snapshot', dataUrl: dataUrl });
+        });
       }
     });
 
-    // 실제 카카오 지도 배경은 CORS 때문에 캡처가 안 되므로(타일이 외부 도메인 이미지),
-    // 우리가 이미 가진 좌표(도면 hull/polylines + 촬영 중 기록한 이동 경로, 전부 UTM-K
-    // 미터 좌표)로 직접 캔버스에 그려서 PDF용 이미지를 만든다.
-    function captureSnapshot() {
+    // 위경도 -> 슬리피맵 표준 월드 픽셀 좌표 (타일 256px 기준, EPSG:3857/Web Mercator).
+    function lonLatToWorldPixel(lon, lat, zoom) {
+      var n = Math.pow(2, zoom);
+      var x = (lon + 180) / 360 * n * 256;
+      var latRad = (lat * Math.PI) / 180;
+      var y = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n * 256;
+      return { x: x, y: y };
+    }
+
+    // CARTO의 무료 베이스맵 타일(CORS 허용, 웹 지도 임베드 용도로 공개 제공됨)을 배경으로
+    // 쓴다. OSM 자체 타일 서버(tile.openstreetmap.org)는 이런 자동/임베드성 요청을 정책상
+    // 차단/제한하는 경우가 많아서 대신 이걸 쓴다. 실패해도 null로 resolve해서 나머지
+    // 타일/오버레이는 계속 그린다.
+    function loadTileImage(z, x, y) {
+      return new Promise(function (resolve) {
+        var img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = function () { resolve(img); };
+        img.onerror = function () {
+          reportDebug('captureSnapshot: 타일 로드 실패 z=' + z + ' x=' + x + ' y=' + y);
+          resolve(null);
+        };
+        img.src = 'https://basemaps.cartocdn.com/light_all/' + z + '/' + x + '/' + y + '.png';
+      });
+    }
+
+    // 도면 hull/polylines + 촬영 중 이동 경로(전부 UTM-K)를 위경도로 바꿔서, 그 범위를
+    // 덮는 OpenStreetMap 타일을 배경으로 깔고 그 위에 도면/경로를 그려 PDF용 이미지를 만든다.
+    // (카카오 지도 타일 자체는 CORS 때문에 캡처가 안 돼서 OSM 타일을 대신 쓴다.)
+    async function captureSnapshot() {
       var allPoints = [];
       var hull = (lastDrawingData && lastDrawingData.hull) || [];
       var polylines = (lastDrawingData && lastDrawingData.polylines) || [];
@@ -476,22 +504,31 @@
 
       if (allPoints.length === 0) return null;
 
-      var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      var minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
       allPoints.forEach(function (p) {
-        minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
-        minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]);
+        var ll = utmKToLatLng(p[0], p[1]);
+        minLon = Math.min(minLon, ll.lng); maxLon = Math.max(maxLon, ll.lng);
+        minLat = Math.min(minLat, ll.lat); maxLat = Math.max(maxLat, ll.lat);
       });
-      var spanX = Math.max(maxX - minX, 1);
-      var spanY = Math.max(maxY - minY, 1);
+      var lonPad = (maxLon - minLon) * 0.15 || 0.001;
+      var latPad = (maxLat - minLat) * 0.15 || 0.001;
+      minLon -= lonPad; maxLon += lonPad; minLat -= latPad; maxLat += latPad;
 
-      var W = 1000, H = 1300, PAD = 60;
-      var scale = Math.min((W - PAD * 2) / spanX, (H - PAD * 2) / spanY);
-      var offsetX = PAD + (W - PAD * 2 - spanX * scale) / 2;
-      var offsetY = PAD + (H - PAD * 2 - spanY * scale) / 2;
+      var W = 1000, H = 1300, MARGIN = 40, ATTR_H = 24;
+      var zoom = 19, p1, p2;
+      for (; zoom >= 1; zoom--) {
+        p1 = lonLatToWorldPixel(minLon, maxLat, zoom); // 좌상단 (위도가 클수록 위쪽)
+        p2 = lonLatToWorldPixel(maxLon, minLat, zoom); // 우하단
+        if (p2.x - p1.x <= W - MARGIN * 2 && p2.y - p1.y <= H - MARGIN * 2 - ATTR_H) break;
+      }
+      var offsetX = (W - (p2.x - p1.x)) / 2 - p1.x;
+      var offsetY = (H - ATTR_H - (p2.y - p1.y)) / 2 - p1.y;
 
-      // UTM-K(동쪽+/북쪽+)를 캔버스 픽셀로: X는 그대로, Y는 위로 갈수록 값이 커지므로 뒤집는다.
+      // UTM-K 점을 캔버스 픽셀로: 위경도로 변환 후 같은 월드픽셀 좌표계로 투영.
       function toPx(pt) {
-        return [offsetX + (pt[0] - minX) * scale, H - (offsetY + (pt[1] - minY) * scale)];
+        var ll = utmKToLatLng(pt[0], pt[1]);
+        var wp = lonLatToWorldPixel(ll.lng, ll.lat, zoom);
+        return [wp.x + offsetX, wp.y + offsetY];
       }
 
       var canvas = document.createElement('canvas');
@@ -499,6 +536,26 @@
       var ctx = canvas.getContext('2d');
       ctx.fillStyle = '#f5f6f7';
       ctx.fillRect(0, 0, W, H);
+
+      var tileMinX = Math.floor(p1.x / 256), tileMaxX = Math.floor(p2.x / 256);
+      var tileMinY = Math.floor(p1.y / 256), tileMaxY = Math.floor(p2.y / 256);
+      var tileCols = tileMaxX - tileMinX + 1, tileRows = tileMaxY - tileMinY + 1;
+      if (tileCols * tileRows <= 64) {
+        var tileJobs = [];
+        for (var tx = tileMinX; tx <= tileMaxX; tx++) {
+          for (var ty = tileMinY; ty <= tileMaxY; ty++) {
+            (function (tx, ty) {
+              tileJobs.push(loadTileImage(zoom, tx, ty).then(function (img) {
+                if (!img) return;
+                ctx.drawImage(img, tx * 256 + offsetX, ty * 256 + offsetY, 256, 256);
+              }));
+            })(tx, ty);
+          }
+        }
+        await Promise.all(tileJobs);
+      } else {
+        reportDebug('captureSnapshot: 타일 개수 초과(' + (tileCols * tileRows) + ')로 배경 지도 생략');
+      }
 
       if (tiffOverlayBBox && tiffOverlayImgEl) {
         var tl = toPx([tiffOverlayBBox.minX, tiffOverlayBBox.maxY]);
@@ -556,6 +613,12 @@
         ctx.fillStyle = '#E74C3C';
         ctx.beginPath(); ctx.arc(endPx[0], endPx[1], 9, 0, 2 * Math.PI); ctx.fill();
       }
+
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillRect(0, H - ATTR_H, W, ATTR_H);
+      ctx.fillStyle = '#333';
+      ctx.font = '12px sans-serif';
+      ctx.fillText('© OpenStreetMap contributors © CARTO', 8, H - 8);
 
       return canvas.toDataURL('image/png');
     }
