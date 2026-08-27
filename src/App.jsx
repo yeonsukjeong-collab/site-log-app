@@ -621,7 +621,9 @@ export default function App() {
       // 아니라 "이 PDF 자신이 저장된 위치 기준 상대경로"로 해석해서 엉뚱한 S3 키를 찾다가
       // NoSuchKey 에러가 났다. 동영상은 항상 이 PDF와 같은 폴더(site_video)에 올라가니,
       // 파일명만 있는 상대경로로 넣으면 "현재 폴더 기준"으로 정확히 그 파일을 가리킨다.
-      const videoLinkUrl = fileName;
+      // 한글이 그대로 들어가면 PDF를 내려받아 로컬에서 열었을 때 뷰어가 깨진 문자로
+      // 해석해 "파일을 찾을 수 없음" 오류가 나서, 표준 percent-encoding을 해준다.
+      const videoLinkUrl = encodeURIComponent(fileName);
 
       flushSync(() => setVideoLogPdfData({ dateStr, timeStr, author, snapshotUrl }));
       const pageEl = document.getElementById('video-log-pdf-page');
