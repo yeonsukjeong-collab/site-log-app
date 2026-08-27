@@ -577,7 +577,9 @@ export default function App() {
       const videoFolder = (await siteLogContentsRes.json()).data.find(item => item.attributes.name === 'site_video');
       if (!videoFolder) throw new Error("'site_video' 폴더를 찾을 수 없습니다. ACC의 Site_log 폴더 안에 먼저 만들어주세요.");
 
-      const ts = new Date().getTime();
+      const pad2 = (n) => String(n).padStart(2, '0');
+      const tsDate = new Date();
+      const ts = `${pad2(tsDate.getFullYear() % 100)}${pad2(tsDate.getMonth() + 1)}${pad2(tsDate.getDate())}${pad2(tsDate.getHours())}${pad2(tsDate.getMinutes())}${pad2(tsDate.getSeconds())}`;
       const ext = videoBlob.type.includes('mp4') ? 'mp4' : 'webm';
       const fileName = `현장영상_${ts}.${ext}`;
       const storageRes = await fetch(`https://developer.api.autodesk.com/data/v1/projects/${project.id}/storage`, {
@@ -601,7 +603,6 @@ export default function App() {
         })
       });
       if (!itemRes.ok) throw new Error("생성 실패");
-      const videoItemUrn = (await itemRes.json()).data.id;
 
       // ------------------------------------------
       // 🎥 동영상과 같이 "공사 현황 동영상 기록" PDF 생성 + 업로드
@@ -616,8 +617,9 @@ export default function App() {
         ? `${userProfile.family_name || ''}${userProfile.given_name || ''}`
         : (userProfile.name || '')) : '';
       const snapshotUrl = await requestMapSnapshot();
-      // ACC Docs 상세보기 딥링크 (커뮤니티에 통용되는 형식 기반 best-effort — 실제로 눌러서 확인 필요)
-      const videoLinkUrl = `https://acc.autodesk.com/docs/files/projects/${project.id.replace(/^b\./, '')}/folders/${encodeURIComponent(videoFolder.id)}/detail/viewer/items/${encodeURIComponent(videoItemUrn)}`;
+      // 동영상이 저장된 현재 폴더(site_video)를 ACC Docs에서 열어주는 링크.
+      // 파일 상세보기 딥링크는 형식이 불확실해서, 대신 폴더를 열어 그 안에서 바로 찾게 한다.
+      const videoLinkUrl = `https://acc.autodesk.com/docs/files/projects/${project.id.replace(/^b\./, '')}/folders/${encodeURIComponent(videoFolder.id)}`;
 
       flushSync(() => setVideoLogPdfData({ dateStr, timeStr, author, snapshotUrl }));
       const pageEl = document.getElementById('video-log-pdf-page');
