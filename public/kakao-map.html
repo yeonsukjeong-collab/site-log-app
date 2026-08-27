@@ -470,13 +470,14 @@
       return { x: x, y: y };
     }
 
-    // Esri의 World_Imagery(위성사진) 타일 서비스 — API 키 없이 무료, CORS 허용, 국내
-    // 고배율(z18+)에서도 실제 이미지가 나오는 걸 확인함. OSM 자체 서버는 이런 자동/임베드성
-    // 요청을 정책상 차단하고, CARTO 무료 타일은 API 키를 요구하게 바뀌어서 이걸로 바꿨다.
-    // 주의: Esri REST 타일 URL은 {z}/{row}/{col} 순서라 {y}가 먼저, {x}가 나중이다
-    // (OSM/CARTO의 {z}/{x}/{y}와 순서가 다름).
+    // VWorld(국토교통부 국가공간정보 오픈플랫폼) 위성영상 WMTS 타일 — 국내 지역을 국가가
+    // 직접 서비스하는 데이터라 화질/최신성이 좋고, CORS도 허용된다(확인함). API 키가
+    // 필요해서 부모 창(site_log_web)이 URL의 vworldKey 파라미터로 넘겨준다.
+    // 주의: VWorld WMTS URL도 {z}/{row}/{col} 순서라 {y}가 먼저, {x}가 나중이다.
+    var VWORLD_API_KEY = new URLSearchParams(window.location.search).get('vworldKey');
     function loadTileImage(z, x, y) {
       return new Promise(function (resolve) {
+        if (!VWORLD_API_KEY) { resolve(null); return; }
         var img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = function () { resolve(img); };
@@ -484,7 +485,7 @@
           reportDebug('captureSnapshot: 타일 로드 실패 z=' + z + ' x=' + x + ' y=' + y);
           resolve(null);
         };
-        img.src = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/' + z + '/' + y + '/' + x;
+        img.src = 'https://api.vworld.kr/req/wmts/1.0.0/' + VWORLD_API_KEY + '/Satellite/' + z + '/' + y + '/' + x + '.jpeg';
       });
     }
 
@@ -516,12 +517,15 @@
       minLon -= lonPad; maxLon += lonPad; minLat -= latPad; maxLat += latPad;
 
       var W = 1000, H = 1300, MARGIN = 40, ATTR_H = 24;
+      var MIN_ZOOM = 6; // VWorld Satellite/Base/Hybrid 레이어가 지원하는 최소 레벨
       var zoom = 19, p1, p2;
-      for (; zoom >= 1; zoom--) {
+      for (; zoom > MIN_ZOOM; zoom--) {
         p1 = lonLatToWorldPixel(minLon, maxLat, zoom); // 좌상단 (위도가 클수록 위쪽)
         p2 = lonLatToWorldPixel(maxLon, minLat, zoom); // 우하단
         if (p2.x - p1.x <= W - MARGIN * 2 && p2.y - p1.y <= H - MARGIN * 2 - ATTR_H) break;
       }
+      p1 = lonLatToWorldPixel(minLon, maxLat, zoom);
+      p2 = lonLatToWorldPixel(maxLon, minLat, zoom);
       var offsetX = (W - (p2.x - p1.x)) / 2 - p1.x;
       var offsetY = (H - ATTR_H - (p2.y - p1.y)) / 2 - p1.y;
 
@@ -619,7 +623,7 @@
       ctx.fillRect(0, H - ATTR_H, W, ATTR_H);
       ctx.fillStyle = '#333';
       ctx.font = '12px sans-serif';
-      ctx.fillText('© Esri, Maxar, Earthstar Geographics', 8, H - 8);
+      ctx.fillText('© VWorld', 8, H - 8);
 
       return canvas.toDataURL('image/png');
     }

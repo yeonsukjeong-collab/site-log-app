@@ -9,7 +9,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
-import { CLIENT_ID, REDIRECT_URI, SCOPES, KAKAO_JS_KEY, generateRandomString, generateCodeChallenge, compressImage } from './utils';
+import { CLIENT_ID, REDIRECT_URI, SCOPES, KAKAO_JS_KEY, VWORLD_API_KEY, generateRandomString, generateCodeChallenge, compressImage } from './utils';
 import { styles, pdfStyles } from './styles';
 import { SITE_DRAWINGS } from './siteDrawings';
 import { parseDwgToDrawing } from './dwgParser';
@@ -830,7 +830,7 @@ export default function App() {
                 <iframe
                   ref={mapIframeRef}
                   title="현장 도면 GPS 지도"
-                  src={`/kakao-map.html?key=${encodeURIComponent(KAKAO_JS_KEY)}`}
+                  src={`/kakao-map.html?key=${encodeURIComponent(KAKAO_JS_KEY)}&vworldKey=${encodeURIComponent(VWORLD_API_KEY)}`}
                   allow="geolocation"
                   style={{ width: '100%', height: '100%', border: 'none' }}
                 />

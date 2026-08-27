@@ -10,6 +10,10 @@ export const SCOPES = 'data:read data:write data:create viewables:read';
 // 카카오 디벨로퍼스 콘솔의 "Web 플랫폼 도메인"에 이 앱이 뜨는 모든 주소(localhost, LAN IP, 배포 주소)를 등록해야 지도가 로드된다.
 export const KAKAO_JS_KEY = 'b743ae7a4c4a88894b5c0ecc3219d5dd';
 
+// 🛰️ 동영상 기록 PDF의 "경로표시" 배경 지도용 VWorld(국토교통부 공간정보 오픈플랫폼) API 키.
+// vworld.kr에서 발급하는 개발키(3개월, 최대 3회 연장) — 만료되면 새로 발급받아 교체.
+export const VWORLD_API_KEY = 'E41C5303-5FAD-3654-A887-5FEC7308BBD9';
+
 export function generateRandomString(length) {
   const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
   let result = '';
