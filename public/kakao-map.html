@@ -470,10 +470,11 @@
       return { x: x, y: y };
     }
 
-    // VWorld(국토교통부 국가공간정보 오픈플랫폼) 위성영상 WMTS 타일 — 국내 지역을 국가가
+    // VWorld(국토교통부 국가공간정보 오픈플랫폼) 일반(2D) 지도 WMTS 타일 — 국내 지역을 국가가
     // 직접 서비스하는 데이터라 화질/최신성이 좋고, CORS도 허용된다(확인함). API 키가
     // 필요해서 부모 창(site_log_web)이 URL의 vworldKey 파라미터로 넘겨준다.
     // 주의: VWorld WMTS URL도 {z}/{row}/{col} 순서라 {y}가 먼저, {x}가 나중이다.
+    // Base 레이어는 png로 서비스된다(Satellite는 jpeg).
     var VWORLD_API_KEY = new URLSearchParams(window.location.search).get('vworldKey');
     function loadTileImage(z, x, y) {
       return new Promise(function (resolve) {
@@ -485,7 +486,7 @@
           reportDebug('captureSnapshot: 타일 로드 실패 z=' + z + ' x=' + x + ' y=' + y);
           resolve(null);
         };
-        img.src = 'https://api.vworld.kr/req/wmts/1.0.0/' + VWORLD_API_KEY + '/Satellite/' + z + '/' + y + '/' + x + '.jpeg';
+        img.src = 'https://api.vworld.kr/req/wmts/1.0.0/' + VWORLD_API_KEY + '/Base/' + z + '/' + y + '/' + x + '.png';
       });
     }
 
@@ -613,10 +614,12 @@
       if (userPathUtm.length >= 1) {
         var startPx = toPx([userPathUtm[0].x, userPathUtm[0].y]);
         var endPx = toPx([userPathUtm[userPathUtm.length - 1].x, userPathUtm[userPathUtm.length - 1].y]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#ffffff';
         ctx.fillStyle = '#2ECC71';
-        ctx.beginPath(); ctx.arc(startPx[0], startPx[1], 9, 0, 2 * Math.PI); ctx.fill();
+        ctx.beginPath(); ctx.arc(startPx[0], startPx[1], 4, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
         ctx.fillStyle = '#E74C3C';
-        ctx.beginPath(); ctx.arc(endPx[0], endPx[1], 9, 0, 2 * Math.PI); ctx.fill();
+        ctx.beginPath(); ctx.arc(endPx[0], endPx[1], 4, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
       }
 
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
