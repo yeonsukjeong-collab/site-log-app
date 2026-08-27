@@ -617,9 +617,11 @@ export default function App() {
         ? `${userProfile.family_name || ''}${userProfile.given_name || ''}`
         : (userProfile.name || '')) : '';
       const snapshotUrl = await requestMapSnapshot();
-      // 동영상이 저장된 현재 폴더(site_video)를 ACC Docs에서 열어주는 링크.
-      // 파일 상세보기 딥링크는 형식이 불확실해서, 대신 폴더를 열어 그 안에서 바로 찾게 한다.
-      const videoLinkUrl = `https://acc.autodesk.com/docs/files/projects/${project.id.replace(/^b\./, '')}/folders/${encodeURIComponent(videoFolder.id)}`;
+      // 절대 URL(https://acc.autodesk.com/...)로 넣었더니 ACC PDF 뷰어가 그걸 절대경로가
+      // 아니라 "이 PDF 자신이 저장된 위치 기준 상대경로"로 해석해서 엉뚱한 S3 키를 찾다가
+      // NoSuchKey 에러가 났다. 동영상은 항상 이 PDF와 같은 폴더(site_video)에 올라가니,
+      // 파일명만 있는 상대경로로 넣으면 "현재 폴더 기준"으로 정확히 그 파일을 가리킨다.
+      const videoLinkUrl = fileName;
 
       flushSync(() => setVideoLogPdfData({ dateStr, timeStr, author, snapshotUrl }));
       const pageEl = document.getElementById('video-log-pdf-page');
